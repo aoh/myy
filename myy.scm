@@ -179,6 +179,10 @@
 (define op-close           2)
 (define op-load-pos        3)
 (define op-return          4)
+(define op-list            6)
+(define op-cons            7)
+(define op-car             8)
+(define op-cdr             9)
 (define op-load-immediate 10)
 (define op-load-value     11)
 (define op-equal          12)
@@ -202,6 +206,7 @@
          (error "Cannot apply " rator))))
       
 (define* (execute s e c d instruction)
+   ;(print "EXEC " instruction)
    (lets ((op a b (decode-inst instruction)))
       (case op
          (op-apply
@@ -235,14 +240,18 @@
                (values (cons (- fa fb) s) e c d)))
          (op-if
             (values s e (if (list-ref s a) (car c) (cdr c)) d))
+         (op-list
+            (values (cons (list (list-ref s a)) s) e c d))
          (else
-            (error "Unknown instruction: " op)))))
+            (error "Myy unknown instruction: " op)))))
 
 (define* (transition s e c d)
    (if (null? c)
-      (lets ((state d d)
-             (s1 e1 c1 d1 state))
-         (values (cons (car s) s1) e1 c1 d1))
+      (lets ((state d d))
+         (apply
+            (lambda (s1 e1 c1)
+               (values (cons (car s) s1) e1 c1 d))
+            state))
       (execute s e (cdr c) d (car c))))
 
 ;; VM transition checks
@@ -281,7 +290,7 @@
          (vm s e c d))))
 
 (define* (run c)
-   (vm null null c '((null null (list (mk-inst op-return 0 0))))))
+   (vm null null c `((null null ,(list (mk-inst op-return 0 0))))))
 
 ;; vm run checks
 (check 42
@@ -335,6 +344,8 @@
       (else (car lst))))
 
 (define* (stack-find s exp)
+   (print "looking for '" exp "' from stack " s)
+   (for-each (lambda (node) (print "  - '" (car node) "' is known as " (cdr node))) s)
    (let loop ((s s) (p 0))
       (cond
          ((null? s) #false)
@@ -397,7 +408,7 @@
       (else
          (name-values (add-name s (car exps) (car names)) (cdr exps) (cdr names)))))
 
-(define nothing "foo")
+(define nothing "[nothing]")
 
 ;; compiler exp S E -> C 
 (define* (compiler exp s e)
@@ -409,10 +420,19 @@
       ((stack-find s exp) =>
          (lambda (pos)
             (values
-               (cons nothing s) ;; don't refer here later to avoid shadowing issues, use the real value
+               (cons (list nothing) s) ;; don't refer here later to avoid shadowing issues, use the real value
                (list (mk-inst-unary op-load-pos pos)))))
       ((symbol? exp)
          (error "myy unbound: " exp))
+      ((lambda? exp)
+         (lets
+            ((formals (cadr exp))
+             (body (caddr exp))
+             (sp code (compiler body (map (lambda (x) (list nothing x)) formals) e)))
+            (print "--------------------- Code for lexp " exp " is " code)
+            (values
+               (cons (list exp) s)
+               (list op-close code))))
       ((list? exp)
          (let ((comp (first-unavailable s (if (or (prim? (car exp)) (lambda? (car exp))) (cdr exp) exp))))
             (cond
@@ -428,6 +448,14 @@
                ((lambda? (car exp))
                   (compiler (caddr (car exp))
                      (name-values s (cdr exp) (cadr (car exp))) e))
+               ((= (length exp) 2)
+                  (lets
+                     ((pos (stack-find s (cadr exp)))
+                      (s (cons (list nothing) s))
+                      (rp (stack-find s (car exp))))
+                     (values
+                        s
+                        (list (mk-inst op-list pos 0) (mk-inst op-apply rp 0)))))
                (else
                   (error "could compile call " (str "call: " exp "\nstack: " s))))))
       (else
@@ -452,6 +480,7 @@
 (check #false (run (compile '((lambda (x y) (eq? x y)) 42 43))))
 (check #true (run (compile '((lambda (x) (eq? 9 (+ 3 x))) 6))))
 (check #true (run (compile '(eq? (- 100 (+ 11 22)) (- (- 100 11) 22)))))
+(check 111 (run (compile '((lambda (op) (op 111)) (lambda (x) x)))))
 
 
 ;; ------------------------------------------ 8< ------------------------------------------
