@@ -183,6 +183,8 @@
 (define op-load-value     11)
 (define op-equal          12)
 (define op-if             13)
+(define op-add            14)
+(define op-sub            15)
 
 (define (mk-closure code env)
    (list 'closure code env))
@@ -223,6 +225,14 @@
             (values (cons (car c) s) e (cdr c) d))
          (op-equal
             (values (cons (eq? (list-ref s a) (list-ref s b)) s) e c d))
+         (op-add
+            (lets ((fa (list-ref s a))
+                   (fb (list-ref s b)))
+               (values (cons (+ fa fb) s) e c d)))
+         (op-sub
+            (lets ((fa (list-ref s a))
+                   (fb (list-ref s b)))
+               (values (cons (- fa fb) s) e c d)))
          (op-if
             (values s e (if (list-ref s a) (car c) (cdr c)) d))
          (else
@@ -345,6 +355,8 @@
 (define (primitive->inst exp)
    (cond
       ((eq? exp 'eq?) op-equal)
+      ((eq? exp '+) op-add)
+      ((eq? exp '-) op-sub)
       (else
          (error "primitive->inst: what is " exp))))
 
@@ -435,6 +447,11 @@
 (check #false (run (compile '((lambda (x) ((lambda (y) (eq? x y)) 42)) 101))))
 (check #true (run (compile '((lambda (x) ((lambda (y) (eq? x y)) 42)) 42))))
 (check #true (run (compile '(eq? (eq? 1 1) (eq? 2 2)))))
+(check #true (run (compile '((lambda (x) (eq? x x)) 42))))
+(check #true (run (compile '((lambda (x y) (eq? x y)) 42 42))))
+(check #false (run (compile '((lambda (x y) (eq? x y)) 42 43))))
+(check #true (run (compile '((lambda (x) (eq? 9 (+ 3 x))) 6))))
+(check #true (run (compile '(eq? (- 100 (+ 11 22)) (- (- 100 11) 22)))))
 
 
 ;; ------------------------------------------ 8< ------------------------------------------
