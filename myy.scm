@@ -307,14 +307,74 @@
 ;;; SECD Compiler
 ;;;
 
-;; sexp -> SECD code
+;; value that need not be evaluated
+(define (simple? val)
+   (or (symbol? val)
+       (number? val)
+       (and (pair? val) (eq? (car val) 'quote))))
 
+(define (complex? x) 
+   (not (simple? x)))
+
+;; s = (exp-evaluated-if-known . names-for-it)
+
+(define (first-nonsimple lst)
+   (cond
+      ((null? lst) #false)
+      ((simple? (car lst)) (first-nonsimple (cdr lst)))
+      (else (car lst))))
+
+(define (stack-find s exp)
+   (let loop ((s s) (p 0))
+      (cond
+         ((null? s) #false)
+         ((eq? (caar s) exp) p)
+         (else (loop (cdr s) (+ p 1))))))
+
+(define (first-unavailable s lst)
+   (cond
+      ((null? lst) #false)
+      ((stack-find s (car lst)) 
+         (first-unavailable s (cdr lst)))
+      (else (car lst))))
+
+(define (prim? exp)
+   (has? '(eq? + - * =) exp))
+
+(define (primitive->inst exp)
+   (cond
+      ((eq? exp 'eq?) op-equal)
+      (else
+         (error "primitive->inst: what is " exp))))
+
+(define* (primitive-call rator rands s)
+   (let ((rands (map (lambda (x) (stack-find s x)) rands)))
+      (cond
+         ((null? rands)
+            (mk-inst-unary (primitive->inst rator) 0))
+         ((null? (cdr rands))
+            (mk-inst-unary (primitive->inst rator) (car rands)))
+         (else
+            (mk-inst (primitive->inst rator) (car rands) (cadr rands))))))
+    
 ;; compiler exp S E -> C 
 (define* (compiler exp s e)
    (cond
       ((number? exp)
-         (list
-            (mk-inst-unary op-load-immediate exp)))
+         (list (mk-inst-unary op-load-immediate exp)))
+      ((simple? exp)
+         (list (mk-inst-unary op-load-value) exp))
+      ((list? exp)
+         (let ((comp (first-unavailable s (if (prim? (car exp)) (cdr exp) exp))))
+            (cond
+               (comp
+                  (let ((code (compiler comp s e)))
+                     (append code
+                        (compiler exp (cons (list comp) s) e))))
+               ((prim? (car exp))
+                  (list (primitive-call (car exp) (cdr exp) s)))
+               (else
+                  (error "could compile call " (str "call: " exp "\nstack: " s))))))
       (else
          (error "compiler: what is " exp))))
 
@@ -328,6 +388,10 @@
 ;; compiler&vm tests
 
 (check 42 (run (compile 42)))
+(check #false (run (compile '(eq? 11 22))))
+(check #true (run (compile '(eq? 11 11))))
+
+
 
 
 
