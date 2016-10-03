@@ -1,4 +1,3 @@
-
 ;;;
 ;;; Sexp mathing
 ;;;
@@ -36,7 +35,17 @@
       ((sexp-case var . cases)
          (sexp-cases var . cases))))
 
+;;; 
+;;; Minimal testing
+;;;
 
+(define-syntax check
+   (syntax-rules ()
+      ((check term desired)
+         (let ((result term))
+            (if (not (equal? result desired))
+               (error "The computer says no." 
+                  (str (quote term) " is " result " instead of " desired ".")))))))
 
 ;;;
 ;;; Virtual memory
@@ -47,6 +56,29 @@
 ;;; Data Encoding
 ;;;
 
+(define (imm-payload n) (>> n 3))
+
+(define (imm-fixval n) (>> n 4))
+
+(define (allocated? n) (eq? 0 (band n #b100)))
+
+(define (immediate? n) (not (allocated? n)))
+
+(define (fixnum? n) (eq? #b1100 (band n #b1111)))
+
+(define (mk-fixnum n) (bor (<< n 4) #b1100))
+
+(define (mk-immediate type payload)
+   (bor (<< payload 8) (bor (<< type 4) #b0100)))
+
+;; encoding tests
+(check (immediate? (mk-fixnum 42)) #true)
+(check (imm-fixval (mk-fixnum 42)) 42)
+(check (fixnum? (mk-fixnum 42)) #true)
+(check (fixnum? (mk-immediate 0 0)) #false)
+(check (allocated? (mk-immediate 0 0)) #false)
+(check (allocated? (mk-fixnum 42)) #false)
+   
 ;;;
 ;;; GC
 ;;;
@@ -55,14 +87,13 @@
 ;; 
 ;; ,------------------------------+----->  allocated object pointer to an *even* word
 ;; |                              |
-;; sxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx
+;;(s)______ ________ ________ ttttFiGG
 ;; |                        | |  |||||
 ;; `------------------------+ |  |||`+--> GC bits
 ;;                          | '--+|`----> immediateness
 ;;                          |    |'-----> fixnum bit  
 ;;                          |    `------> immediate object type (16 options)
 ;;                          `-----------> immediate payload (typically signed)
-;;
 ;; Immediate case
 
 
@@ -76,11 +107,18 @@
 ;;; SECD VM
 ;;;
 
+(define (execute s e c d op)
+   (cond
+      (else 42)))
+        
+
 (define (transition s e c d)
    (if (null? c)
       (lets ((state d d)
              (s1 e1 c1 d1 state))
          (values (cons (car s) s1) e1 c1 d1))
-      (lets ((op c c))
+      (execute s e (cdr c) d (car c))))
 
+         
 (print "foo")
+
