@@ -67,13 +67,44 @@
 
 
 (define (ptr n) (<< n 2))
+;;;
+;;; Data Encoding
+;;;
 
-(define (make-memory limit)
-   (if (even? limit)
-      (-> #empty
-         (put 'end (* limit 8))
-         (put 'free (ptr 0)))
-      (error "list structured memory needs an even number of words, but got" limit)))
+;; Allocated case
+;; 
+;; ,------------------------------+-----> allocated object pointer to an *even* word
+;; |                              |,----> pairness if alloc (otherwise car is a header)
+;; |                              ||
+;;(s)______ ________ ________ tttttPIG
+;; |                        | |   ||||
+;; |                        | |   |||`--> GC flag
+;; `------------------------+ |   ||`---> immediateness
+;;                          | '---+`----> fixnumness if immediate
+;;                          |     `-----> immediate object type (32 options)
+;;                          `-----------> immediate payload (typically signed)
+;; Immediate case
+(define (imm-fixval n) (>> n 3))
+(define (allocated? n) (eq? 0 (band n #b10)))
+(define (immediate? n) (not (allocated? n)))
+(define (fixnum? n) (eq? #b110 (band n #b110)))
+(define (mk-fixnum n) (bor (<< n 3) #b110))
+(define (mk-immediate type payload)
+   (bor (<< payload 8) (bor (<< type 3) #b010)))
+
+;; encoding tests
+(check #true (immediate? (mk-fixnum 42)))
+(check 42 (imm-fixval (mk-fixnum 42)))
+(check #true (fixnum? (mk-fixnum 42)))
+(check #false (fixnum? (mk-immediate 0 0)))
+(check #false (allocated? (mk-immediate 0 0)))
+(check #false (allocated? (mk-fixnum 42)))
+
+(define myy-null (mk-immediate 0 0))
+(define myy-true (mk-immediate 1 1))
+(define myy-false (mk-immediate 1 0))
+ 
+(define (marked? word) (eq? 1 (band word 1)))
 
 (define (check-pointer mem ptr)
    (cond
@@ -88,7 +119,7 @@
 
 (define (read mem ptr)
    (check-pointer mem ptr)
-   (let ((val (getf mem ptr)))
+   (let ((val (get mem ptr myy-null)))
       (if val val
          (error "Invalid memory access: " ptr))))
 
@@ -96,64 +127,11 @@
    (check-pointer mem ptr)
    (put mem ptr val))
 
-(define (mem-cons mem a b)
-   (let ((free (getf mem 'free)))
-      (values
-         (-> mem
-            (put 'free (+ free 8))
-            (write free a)
-            (write (+ free 4) b))
-         free)))
-
 (define (mem-car mem ptr) (read mem ptr))
 (define (mem-cdr mem ptr) (read mem (+ ptr 4)))
 (define (mem-car! mem ptr val) (write mem ptr val))
 (define (mem-cdr! mem ptr val) (write mem (+ ptr 4) val))
    
-;; memory tests
-(check 42 (-> (make-memory 10) (write (ptr 0) 42) (read (ptr 0))))
-(check 42 (-> (make-memory 10) (write (ptr 5) 42) (read (ptr 5))))
-(check 42 (-> (make-memory 10) (write (ptr 3) 24) (write (ptr 3) 42) (read (ptr 3))))
-(check 20
-   (lets ((m (make-memory 10))
-          (m ptr (mem-cons m 22 2)))
-      (- (mem-car m ptr) (mem-cdr m ptr))))
-(check 11
-   (lets ((m (make-memory 10))
-          (m a (mem-cons m 11 22))
-          (m b (mem-cons m 33 a)))
-      (mem-car m (mem-cdr m b))))
-   
-
-
-;;;
-;;; Data Encoding
-;;;
-
-(define (imm-payload n) (>> n 3))
-(define (imm-fixval n) (>> n 4))
-(define (allocated? n) (eq? 0 (band n #b100)))
-(define (immediate? n) (not (allocated? n)))
-(define (fixnum? n) (eq? #b1100 (band n #b1111)))
-(define (mk-fixnum n) (bor (<< n 4) #b1100))
-(define (mk-immediate type payload)
-   (bor (<< payload 8) (bor (<< type 4) #b0100)))
-
-;; encoding tests
-(check #true (immediate? (mk-fixnum 42)))
-(check 42 (imm-fixval (mk-fixnum 42)))
-(check #true (fixnum? (mk-fixnum 42)))
-(check #false (fixnum? (mk-immediate 0 0)))
-(check #false (allocated? (mk-immediate 0 0)))
-(check #false (allocated? (mk-fixnum 42)))
-
-   
-;;;
-;;; GC
-;;;
-
-(define (marked? word) (eq? 1 (band word 1)))
-
 (define (set-mark word)
    (if (marked? word)
       (error "trying to remark word " word)
@@ -163,6 +141,47 @@
    (if (marked? word)
       (bxor word 1)
       (error "trying to unmark unmarked " word)))
+
+(define (sweep mem)
+   (let loop ((mem mem) (pos (- (get mem 'end 8) 8)) (free 0))
+      (if (eq? pos 0)
+         (put mem 'free free)
+         (let ((val (mem-car mem pos)))
+            (if (marked? val)
+               (loop (mem-car! mem pos (unset-mark val)) (- pos 8) free)
+               (loop (mem-cdr! mem pos free) (- pos 8) pos))))))
+
+(define (make-memory limit)
+   (if (even? limit)
+      (sweep
+         (-> #empty (put 'end (* limit 8))))
+      (error "list structured memory needs an even number of words, but got" limit)))
+
+(define (mem-cons mem a b)
+   (let ((free (getf mem 'free)))
+      (if (eq? free myy-null)
+         (error "gc needed")
+         (values
+            (-> mem
+               (put 'free (mem-cdr mem free))
+               (write free a)
+               (write (+ free 4) b))
+            free))))
+
+;; memory tests
+(check 42 (-> (make-memory 10) (write (ptr 0) 42) (read (ptr 0))))
+(check 42 (-> (make-memory 10) (write (ptr 5) 42) (read (ptr 5))))
+(check 42 (-> (make-memory 10) (write (ptr 3) 24) (write (ptr 3) 42) (read (ptr 3))))
+(check 20 (lets ((m (make-memory 10)) (m ptr (mem-cons m 22 2))) (- (mem-car m ptr) (mem-cdr m ptr))))
+(check 11 (lets ((m (make-memory 10)) (m a (mem-cons m 11 22)) (m b (mem-cons m 33 a))) (mem-car m (mem-cdr m b))))
+   
+
+
+  
+;;;
+;;; GC
+;;;
+
 
 (define (mark mem root)
    (define (process mem ptr parent)
@@ -175,7 +194,7 @@
                   (process mem val (set-mark ptr)))))))
    (define (backtrack mem ptr parent)
       (cond
-         ((eq? parent 0)
+         ((eq? parent myy-null)
             (values mem ptr))
          ((marked? parent)
             (lets 
@@ -187,21 +206,14 @@
          (else
             (lets
                ((foo (mem-cdr mem parent))
-                (mem (mem-cdr! mem ptr)))
+                (mem (mem-cdr! mem parent ptr)))
                (backtrack mem parent foo)))))
-   (process mem root 0))
+   (process mem root myy-null))
 
-(define (sweep mem)
-   (let loop ((mem mem) (pos (- (getf mem 'free) 8)) (free 0))
-      (print "gc sweep at " pos)
-      (if (eq? pos 0)
-         (put mem 'free free)
-         (let ((val (mem-car mem pos)))
-            (if (marked? val)
-               (loop (mem-car! mem pos (unset-mark val)) (- pos 8) free)
-               (loop (mem-cdr! mem pos free) (- pos 8) pos))))))
+
 
 (check (mk-fixnum 42) (lets ((mem val (mark (make-memory 10) (mk-fixnum 42)))) val))
+
 (lets ((mem (make-memory 10))
        (mem a (mem-cons mem (mk-fixnum 22) (mk-fixnum 33)))
        (mem b (mem-cons mem (mk-fixnum 1) (mk-fixnum 2)))
@@ -214,7 +226,7 @@
    (check #false (marked? (mem-cdr mem b)))
    (check #true (marked? (mem-car mem a)))
    (check #false (marked? (mem-cdr mem a))))
-   
+
 
 ;;;
 ;;; Instruction format (de/encoding the number payload)
