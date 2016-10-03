@@ -150,12 +150,15 @@
 
 
 ;;;
-;;; Instruction format
+;;; Instruction format (de/encoding the number payload)
 ;;;
+
+(define (mk-inst-unary opcode a)
+   (bor opcode (<< a 6)))
 
 ;; 6-bit opcode, 8-bit a, n>=8-bit b
 (define (mk-inst opcode a b)
-   (bor opcode (bor (<< a 6) (<< b 14))))
+   (mk-inst-unary opcode (bor a (<< b 8))))
 
 (define (decode-inst n)
    (values (band n #b111111)
@@ -166,11 +169,6 @@
 (check (list 11 22 33)
    (lets ((a b c (decode-inst (mk-inst 11 22 33))))
       (list a b c)))
-
-;;;
-;;; SECD Compiler
-;;;
-
 
 
 ;;;
@@ -281,6 +279,57 @@
       (list 
          (mk-inst op-load-immediate 42 0)
          (mk-inst op-return 0 0))))
+(check 42
+   (run
+      (list
+         (mk-inst op-load-immediate 11 0)
+         (mk-inst op-load-immediate 11 0)
+         (mk-inst op-equal 0 1)
+         (mk-inst op-if 0 0) 
+         (list 
+            (mk-inst op-load-immediate 42 0)
+            (mk-inst op-return 0 0))
+         (mk-inst op-return 1 0))))
+ (check 22
+   (run
+      (list
+         (mk-inst op-load-immediate 11 0)
+         (mk-inst op-load-immediate 22 0)
+         (mk-inst op-equal 0 1)
+         (mk-inst op-if 0 0) 
+         (list 
+            (mk-inst op-load-immediate 42 0)
+            (mk-inst op-return 0 0))
+         (mk-inst op-return 1 0))))
+
+
+;;;
+;;; SECD Compiler
+;;;
+
+;; sexp -> SECD code
+
+;; compiler exp S E -> C 
+(define* (compiler exp s e)
+   (cond
+      ((number? exp)
+         (list
+            (mk-inst-unary op-load-immediate exp)))
+      (else
+         (error "compiler: what is " exp))))
+
+(define* (compile exp)
+   (append
+      (compiler exp null null)
+      (list 
+         (mk-inst op-return 0 0))))
+
+
+;; compiler&vm tests
+
+(check 42 (run (compile 42)))
+
+
 
 ;; ------------------------------------------ 8< ------------------------------------------
 
