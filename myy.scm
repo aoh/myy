@@ -180,6 +180,7 @@
 (define op-apply           1)
 (define op-close           2)
 (define op-load-pos        3)
+(define op-return          4)
 (define op-load-immediate 10)
 (define op-load-value     11)
 (define op-equal          12)
@@ -191,7 +192,7 @@
 (define (closure? thing)
    (and (pair? thing) (eq? 'closure (car thing))))
 
-(define (apply s e c d rator rands)
+(define (vm-apply s e c d rator rands)
    (cond
       ((closure? rator)
          (lets ((ccode (cadr rator)) (cenv (caddr rator)))
@@ -200,17 +201,20 @@
       (else
          (error "Cannot apply " rator))))
       
-(define (execute s e c d instruction)
+(define* (execute s e c d instruction)
    (lets ((op a b (decode-inst instruction)))
       (case op
          (op-apply
             (lets
                ((rator (list-ref s a))
                 (rands (list-ref s b)))
-               (apply s e c d rator rands)))
+               (vm-apply s e c d rator rands)))
          (op-close 
             (values
                (cons (mk-closure (car c) e) s) e (cdr c) d))
+         (op-return 
+            (let ((rval (list-ref s a)))
+               (apply (lambda (s e c) (values (cons rval s) e c (cdr d))) (car d))))
          (op-load-immediate
             ;; load immediate directly after instruction opcode
             (values (cons (>> instruction 6) s) e c d))
@@ -226,16 +230,14 @@
          (else
             (error "Unknown instruction: " op)))))
 
-(define (transition s e c d)
+(define* (transition s e c d)
    (if (null? c)
       (lets ((state d d)
              (s1 e1 c1 d1 state))
          (values (cons (car s) s1) e1 c1 d1))
       (execute s e (cdr c) d (car c))))
 
-
 ;; VM transition checks
-
 (define-syntax check-transition
    (syntax-rules (=>)
       ((check-transition s e c d => sp ep cp dp)
@@ -245,6 +247,7 @@
                 (got (list sx ex cx dx)))
             (if (not (equal? desired got))
                (error "The computer says no." (str "SECD " start " => \n    " got " instead of\n    " desired)))))))
+
  
 (check-transition 'S 'E (list (bor (<< 42 6) op-load-immediate)) 'D => '(42 . S) 'E null 'D)
 (check-transition 'S 'E (list op-load-value 42) 'D => '(42 . S) 'E () 'D)
@@ -256,27 +259,42 @@
 (check-transition '(a x a b) 'E (list (mk-inst op-equal 0 1)) 'D => '(#false a x a b) 'E null 'D)
 (check-transition '(x #false) 'E (ilist (mk-inst op-if 0 0) 'THEN 'ELSE) 'D => '(x #false) 'E 'THEN 'D)
 (check-transition '(x #false) 'E (ilist (mk-inst op-if 1 0) 'THEN 'ELSE) 'D => '(x #false) 'E 'ELSE 'D)
+(check-transition '(x x RESULT) 'XE (list (mk-inst op-return 2 0)) '((S E C) . D)  => '(RESULT . S) 'E 'C 'D)
 
 
 ;;;
 ;;; SECD VM
 ;;;
 
+(define* (vm s e c d)
+   (if (null? d)
+      (car s)
+      (lets ((s e c d (transition s e c d)))
+         (vm s e c d))))
 
+(define* (run c)
+   (vm null null c '((null null (list (mk-inst op-return 0 0))))))
+
+;; vm run checks
+(check 42
+   (run 
+      (list 
+         (mk-inst op-load-immediate 42 0)
+         (mk-inst op-return 0 0))))
 
 ;; ------------------------------------------ 8< ------------------------------------------
 
-;; varying output for watch
+;; varying output for $ watch -n 0.2 "ol myy.scm | tail -n 20"
 (lets 
-   ((t (>> (time-ms) 9))
+   ((t (time-ms))
     (cs '(#\space #\▐  #\▌ #\█))
     (rcs (reverse cs)))
    (print 
       (list->string 
-         (cons #\░ 
+         (ilist #\newline #\space #\space #\░ 
             (reverse
                (cons #\░ 
                   (map (lambda (x) (list-ref cs (band (>> t (<< x 1)) #b11)))
-                       (iota 0 1 10))))))))
+                       (iota 0 1 30))))))))
    
 
