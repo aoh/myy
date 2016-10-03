@@ -51,6 +51,41 @@
 ;;; Virtual memory
 ;;;
 
+(define (make-memory limit)
+   (if (even? limit)
+      (put #empty 'limit (* limit 8))
+      (error "list structured memory needs an even number of words, but got" limit)))
+
+(define (read mem ptr)
+   (cond
+      ((not (number? ptr))
+         (error "Bug: trying to read " ptr))
+      ((not (eq? (band ptr #b11) 0))
+         (error "Invalid pointer alignment in read: " ptr))
+      ((or (< ptr 0) (> ptr (getf mem 'limit)))
+         (error "Segmentation violation: reading " ptr))
+      (else
+         (let ((val (getf mem (>> ptr 2))))
+            (if val val
+               (error "Invalid memory access: " ptr))))))
+
+(define (write mem ptr val)
+   (cond
+      ((not (number? ptr))
+         (error "Bug: trying to write " ptr))
+      ((not (eq? (band ptr #b11) 0))
+         (error "Invalid pointer alignment in write: " ptr))
+      ((or (< ptr 0) (> ptr (getf mem 'limit)))
+         (error "Segmentation violation: writing " ptr))
+      (else
+         (put mem ptr val))))
+
+;; memory tests
+(check 
+   (-> (make-memory 10)
+       (write (<< 0 2) 42)
+       (read (<< 0 2)))
+   42)
 
 ;;;
 ;;; Data Encoding
