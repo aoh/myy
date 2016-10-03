@@ -65,7 +65,7 @@
       ((or (< ptr 0) (> ptr (getf mem 'limit)))
          (error "Segmentation violation: reading " ptr))
       (else
-         (let ((val (getf mem (>> ptr 2))))
+         (let ((val (getf mem ptr)))
             (if val val
                (error "Invalid memory access: " ptr))))))
 
@@ -80,11 +80,13 @@
       (else
          (put mem ptr val))))
 
+(define (ptr n) (<< n 2))
+
 ;; memory tests
-(check 42 
-   (-> (make-memory 10)
-       (write (<< 0 2) 42)
-       (read (<< 0 2))))
+(check 42 (-> (make-memory 10) (write (ptr 0) 42) (read (ptr 0))))
+(check 42 (-> (make-memory 10) (write (ptr 5) 42) (read (ptr 5))))
+(check 42 (-> (make-memory 10) (write (ptr 3) 24) (write (ptr 3) 42) (read (ptr 3))))
+
 
 ;;;
 ;;; Data Encoding
