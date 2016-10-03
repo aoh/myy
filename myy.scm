@@ -324,11 +324,12 @@
       ((simple? (car lst)) (first-nonsimple (cdr lst)))
       (else (car lst))))
 
-(define (stack-find s exp)
+(define* (stack-find s exp)
    (let loop ((s s) (p 0))
       (cond
          ((null? s) #false)
-         ((eq? (caar s) exp) p)
+         ;((eq? (caar s) exp) p)
+         ((has? (car s) exp) p) 
          (else (loop (cdr s) (+ p 1))))))
 
 (define (first-unavailable s lst)
@@ -356,16 +357,46 @@
             (mk-inst-unary (primitive->inst rator) (car rands)))
          (else
             (mk-inst (primitive->inst rator) (car rands) (cadr rands))))))
-    
+
+(define (lambda? exp)
+   (and (list? exp)
+        (= (length exp) 3)
+        (eq? (car exp) 'lambda)))
+
+(define (add-name s exp name)
+   (cond
+      ((null? s) 
+         (error "bug: add-name: not in stack: " exp))
+      ((eq? (caar s) exp)
+         (cons (append (car s) (list name))
+               (cdr s)))
+      (else
+         (cons (car s)
+            (add-name (cdr s) exp name)))))
+
+(define (name-values s exps names)
+   (cond
+      ((null? exps)
+         (if (null? names)
+            s
+            (error "operator lambda wrong number or values, missing " names)))
+      ((null? names)
+         (error "operator lambda wrong number of values, extra args " exps))
+      (else
+         (name-values (add-name s (car exps) (car names)) (cdr exps) (cdr names)))))
+
 ;; compiler exp S E -> C 
 (define* (compiler exp s e)
    (cond
       ((number? exp)
          (list (mk-inst-unary op-load-immediate exp)))
-      ((simple? exp)
-         (list (mk-inst-unary op-load-value) exp))
+      ((stack-find s exp) =>
+         (lambda (pos)
+            (list (mk-inst-unary op-load-pos pos))))
+      ((symbol? exp)
+         (error "myy unbound: " exp))
       ((list? exp)
-         (let ((comp (first-unavailable s (if (prim? (car exp)) (cdr exp) exp))))
+         (let ((comp (first-unavailable s (if (or (prim? (car exp)) (lambda? (car exp))) (cdr exp) exp))))
             (cond
                (comp
                   (let ((code (compiler comp s e)))
@@ -373,6 +404,9 @@
                         (compiler exp (cons (list comp) s) e))))
                ((prim? (car exp))
                   (list (primitive-call (car exp) (cdr exp) s)))
+               ((lambda? (car exp))
+                  (compiler (caddr (car exp))
+                     (name-values s (cdr exp) (cadr (car exp))) e))
                (else
                   (error "could compile call " (str "call: " exp "\nstack: " s))))))
       (else
@@ -390,6 +424,8 @@
 (check 42 (run (compile 42)))
 (check #false (run (compile '(eq? 11 22))))
 (check #true (run (compile '(eq? 11 11))))
+(check 42 (run (compile '((lambda (x) x) 42))))
+(check 42 (run (compile '((lambda (x) ((lambda (x) x) 42)) 101))))
 
 
 
