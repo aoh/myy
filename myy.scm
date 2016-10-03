@@ -174,7 +174,7 @@
 
 
 ;;;
-;;; SECD VM, direct
+;;; SECD VM, direct, transitions
 ;;;
 
 (define op-apply           1)
@@ -182,6 +182,8 @@
 (define op-load-pos        3)
 (define op-load-immediate 10)
 (define op-load-value     11)
+(define op-equal          12)
+(define op-if             13)
 
 (define (mk-closure code env)
    (list 'closure code env))
@@ -217,6 +219,10 @@
          (op-load-value
             ;; load subsequent (likely allocated) value
             (values (cons (car c) s) e (cdr c) d))
+         (op-equal
+            (values (cons (eq? (list-ref s a) (list-ref s b)) s) e c d))
+         (op-if
+            (values s e (if (list-ref s a) (car c) (cdr c)) d))
          (else
             (error "Unknown instruction: " op)))))
 
@@ -228,7 +234,7 @@
       (execute s e (cdr c) d (car c))))
 
 
-;; VM checks
+;; VM transition checks
 
 (define-syntax check-transition
    (syntax-rules (=>)
@@ -246,6 +252,19 @@
 (check-transition '(s0 s1 s2) 'E (list (mk-inst op-load-pos 2 0)) 'D => '(s2 s0 s1 s2) 'E () 'D)
 (check-transition '((closure CC CE) (A0 A1) . S) 'E (cons (mk-inst op-apply 0 1) 'C) 'D =>
                    '(A0 A1) 'CE 'CC '((((closure CC CE) (A0 A1) . S) E C) . D)) 
+(check-transition '(a x a b) 'E (list (mk-inst op-equal 0 2)) 'D => '(#true a x a b) 'E null 'D)
+(check-transition '(a x a b) 'E (list (mk-inst op-equal 0 1)) 'D => '(#false a x a b) 'E null 'D)
+(check-transition '(x #false) 'E (ilist (mk-inst op-if 0 0) 'THEN 'ELSE) 'D => '(x #false) 'E 'THEN 'D)
+(check-transition '(x #false) 'E (ilist (mk-inst op-if 1 0) 'THEN 'ELSE) 'D => '(x #false) 'E 'ELSE 'D)
+
+
+;;;
+;;; SECD VM
+;;;
+
+
+
+;; ------------------------------------------ 8< ------------------------------------------
 
 ;; varying output for watch
 (lets 
