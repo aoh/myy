@@ -59,7 +59,7 @@
 ;; |                        | |  |||||
 ;; `------------------------+ |  |||`+--> GC bits
 ;;                          | '--+|`----> immediateness
-;;                          |    |'-----> fixnum bit  
+;;                          |    |'-----> fixnum bit, leaves sign + 27 bits for fixnums
 ;;                          |    `------> immediate object type (16 options)
 ;;                          `-----------> immediate payload (typically signed)
 ;; Immediate case
@@ -149,6 +149,23 @@
 ;;;
 
 
+;;;
+;;; Instruction format
+;;;
+
+;; 6-bit opcode, 8-bit a, n>=8-bit b
+(define (mk-inst opcode a b)
+   (bor opcode (bor (<< a 6) (<< b 14))))
+
+(define (decode-inst n)
+   (values (band n #b111111)
+           (band (>> n 6) #b11111111)
+           (>> n 14)))
+
+;; instruction checks
+(check (list 11 22 33)
+   (lets ((a b c (decode-inst (mk-inst 11 22 33))))
+      (list a b c)))
 
 ;;;
 ;;; SECD Compiler
@@ -157,13 +174,23 @@
 
 
 ;;;
-;;; SECD VM
+;;; SECD VM, direct
 ;;;
 
-(define (execute s e c d op)
-   (cond
-      (else 42)))
-        
+(define op-load-immediate 10)
+(define op-load-value     11)
+
+(define (execute s e c d instruction)
+   (lets ((op a b (decode-inst instruction)))
+      (case op
+         (op-load-immediate
+            ;; load immediate directly after instruction opcode
+            (values (cons (>> instruction 6) s) e c d))
+         (op-load-value
+            ;; load subsequent (likely allocated) value
+            (values (cons (car c) s) e (cdr c) d))
+         (else
+            (error "Unknown instruction: " op)))))
 
 (define (transition s e c d)
    (if (null? c)
@@ -172,6 +199,34 @@
          (values (cons (car s) s1) e1 c1 d1))
       (execute s e (cdr c) d (car c))))
 
-         
-(print "foo")
+
+;; VM checks
+
+(define-syntax check-transition
+   (syntax-rules (=>)
+      ((check-transition s e c d => sp ep cp dp)
+         (lets ((sx ex cx dx (transition s e c d))
+                (start (list s e c d))
+                (desired (list sp ep cp dp))
+                (got (list sx ex cx dx)))
+            (if (not (equal? desired got))
+               (error "The computer says no." (str "SECD " start " => " got " instead of " desired)))))))
+ 
+(check-transition () () (list (bor (<< 42 6) op-load-immediate)) () => '(42) () () ())
+(check-transition () () (list op-load-value 42) () => '(42) () () ())
+
+
+;; varying output for watch
+(lets 
+   ((t (>> (time-ms) 9))
+    (cs '(#\space #\▐  #\▌ #\█))
+    (rcs (reverse cs)))
+   (print 
+      (list->string 
+         (cons #\░ 
+            (reverse
+               (cons #\░ 
+                  (map (lambda (x) (list-ref cs (band (>> t (<< x 1)) #b11)))
+                       (iota 0 1 10))))))))
+   
 
