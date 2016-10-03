@@ -54,13 +54,14 @@
 ;; Allocated case
 ;; 
 ;; ,------------------------------+-----> allocated object pointer to an *even* word
-;; |                              |,----> pairness (otherwise car is a header)
-;;(s)______ ________ ________ ttttFiGG
-;; |                        | |  |||||
-;; `------------------------+ |  |||`+--> GC bits
-;;                          | '--+|`----> immediateness
-;;                          |    |'-----> fixnum bit, leaves sign + 27 bits for fixnums
-;;                          |    `------> immediate object type (16 options)
+;; |                              |,----> pairness if alloc (otherwise car is a header)
+;; |                              ||
+;;(s)______ ________ ________ tttttPIG
+;; |                        | |   ||||
+;; |                        | |   |||`--> GC flag
+;; `------------------------+ |   ||`---> immediateness
+;;                          | '---+`----> fixnumness if immediate
+;;                          |     `-----> immediate object type (32 options)
 ;;                          `-----------> immediate payload (typically signed)
 ;; Immediate case
 
@@ -167,10 +168,11 @@
    (define (process mem ptr parent)
       (if (immediate? ptr)
          (backtrack mem ptr parent)
-         (lets
-            ((val (mem-car mem ptr))
-             (mem (mem-car! mem ptr (set-mark parent))))
-            (process mem val (set-mark ptr)))))
+         (let ((val (mem-car mem ptr)))
+            (if (marked? val)
+               (backtrack mem ptr parent)
+               (let ((mem (mem-car! mem ptr (set-mark parent))))
+                  (process mem val (set-mark ptr)))))))
    (define (backtrack mem ptr parent)
       (cond
          ((eq? parent 0)
