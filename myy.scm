@@ -177,15 +177,25 @@
 ;;; SECD VM, direct
 ;;;
 
+(define op-close           2)
+(define op-load-pos        3)
 (define op-load-immediate 10)
 (define op-load-value     11)
+
+(define (mk-closure code env)
+   (list 'closure code env))
 
 (define (execute s e c d instruction)
    (lets ((op a b (decode-inst instruction)))
       (case op
+         (op-close 
+            (values
+               (cons (mk-closure (car c) e) s) e (cdr c) d))
          (op-load-immediate
             ;; load immediate directly after instruction opcode
             (values (cons (>> instruction 6) s) e c d))
+         (op-load-pos
+            (values (cons (list-ref s a) s) e c d))
          (op-load-value
             ;; load subsequent (likely allocated) value
             (values (cons (car c) s) e (cdr c) d))
@@ -212,8 +222,10 @@
             (if (not (equal? desired got))
                (error "The computer says no." (str "SECD " start " => " got " instead of " desired)))))))
  
-(check-transition () () (list (bor (<< 42 6) op-load-immediate)) () => '(42) () () ())
-(check-transition () () (list op-load-value 42) () => '(42) () () ())
+(check-transition 'S 'E (list (bor (<< 42 6) op-load-immediate)) 'D => '(42 . S) 'E null 'D)
+(check-transition 'S 'E (list op-load-value 42) 'D => '(42 . S) 'E () 'D)
+(check-transition 'S 'E (list op-close 'CODE) 'D => '((closure CODE E) . S) 'E () 'D)
+(check-transition '(s0 s1 s2) 'E (list (mk-inst op-load-pos 2 0)) 'D => '(s2 s0 s1 s2) 'E () 'D)
 
 
 ;; varying output for watch
