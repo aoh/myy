@@ -385,25 +385,34 @@
       (else
          (name-values (add-name s (car exps) (car names)) (cdr exps) (cdr names)))))
 
+(define nothing "foo")
+
 ;; compiler exp S E -> C 
 (define* (compiler exp s e)
    (cond
       ((number? exp)
-         (list (mk-inst-unary op-load-immediate exp)))
+         (values
+            (cons (list exp) s)
+            (list (mk-inst-unary op-load-immediate exp))))
       ((stack-find s exp) =>
          (lambda (pos)
-            (list (mk-inst-unary op-load-pos pos))))
+            (values
+               (cons nothing s) ;; don't refer here later to avoid shadowing issues, use the real value
+               (list (mk-inst-unary op-load-pos pos)))))
       ((symbol? exp)
          (error "myy unbound: " exp))
       ((list? exp)
          (let ((comp (first-unavailable s (if (or (prim? (car exp)) (lambda? (car exp))) (cdr exp) exp))))
             (cond
                (comp
-                  (let ((code (compiler comp s e)))
-                     (append code
-                        (compiler exp (cons (list comp) s) e))))
+                  (lets
+                     ((s code (compiler comp s e))
+                      (s rest (compiler exp s e)))
+                     (values s (append code rest))))
                ((prim? (car exp))
-                  (list (primitive-call (car exp) (cdr exp) s)))
+                  (values
+                     (cons (list exp) s)
+                     (list (primitive-call (car exp) (cdr exp) s))))
                ((lambda? (car exp))
                   (compiler (caddr (car exp))
                      (name-values s (cdr exp) (cadr (car exp))) e))
@@ -413,10 +422,8 @@
          (error "compiler: what is " exp))))
 
 (define* (compile exp)
-   (append
-      (compiler exp null null)
-      (list 
-         (mk-inst op-return 0 0))))
+   (lets ((s c (compiler exp null null)))
+      (append c (list (mk-inst op-return 0 0)))))
 
 
 ;; compiler&vm tests
@@ -425,10 +432,9 @@
 (check #false (run (compile '(eq? 11 22))))
 (check #true (run (compile '(eq? 11 11))))
 (check 42 (run (compile '((lambda (x) x) 42))))
-(check 42 (run (compile '((lambda (x) ((lambda (x) x) 42)) 101))))
-
-
-
+(check #false (run (compile '((lambda (x) ((lambda (y) (eq? x y)) 42)) 101))))
+(check #true (run (compile '((lambda (x) ((lambda (y) (eq? x y)) 42)) 42))))
+(check #true (run (compile '(eq? (eq? 1 1) (eq? 2 2)))))
 
 
 ;; ------------------------------------------ 8< ------------------------------------------
