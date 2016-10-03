@@ -177,6 +177,7 @@
 ;;; SECD VM, direct
 ;;;
 
+(define op-apply           1)
 (define op-close           2)
 (define op-load-pos        3)
 (define op-load-immediate 10)
@@ -185,9 +186,26 @@
 (define (mk-closure code env)
    (list 'closure code env))
 
+(define (closure? thing)
+   (and (pair? thing) (eq? 'closure (car thing))))
+
+(define (apply s e c d rator rands)
+   (cond
+      ((closure? rator)
+         (lets ((ccode (cadr rator)) (cenv (caddr rator)))
+            (values 
+               rands cenv ccode (cons (list s e c) d))))
+      (else
+         (error "Cannot apply " rator))))
+      
 (define (execute s e c d instruction)
    (lets ((op a b (decode-inst instruction)))
       (case op
+         (op-apply
+            (lets
+               ((rator (list-ref s a))
+                (rands (list-ref s b)))
+               (apply s e c d rator rands)))
          (op-close 
             (values
                (cons (mk-closure (car c) e) s) e (cdr c) d))
@@ -220,13 +238,14 @@
                 (desired (list sp ep cp dp))
                 (got (list sx ex cx dx)))
             (if (not (equal? desired got))
-               (error "The computer says no." (str "SECD " start " => " got " instead of " desired)))))))
+               (error "The computer says no." (str "SECD " start " => \n    " got " instead of\n    " desired)))))))
  
 (check-transition 'S 'E (list (bor (<< 42 6) op-load-immediate)) 'D => '(42 . S) 'E null 'D)
 (check-transition 'S 'E (list op-load-value 42) 'D => '(42 . S) 'E () 'D)
 (check-transition 'S 'E (list op-close 'CODE) 'D => '((closure CODE E) . S) 'E () 'D)
 (check-transition '(s0 s1 s2) 'E (list (mk-inst op-load-pos 2 0)) 'D => '(s2 s0 s1 s2) 'E () 'D)
-
+(check-transition '((closure CC CE) (A0 A1) . S) 'E (cons (mk-inst op-apply 0 1) 'C) 'D =>
+                   '(A0 A1) 'CE 'CC '((((closure CC CE) (A0 A1) . S) E C) . D)) 
 
 ;; varying output for watch
 (lets 
