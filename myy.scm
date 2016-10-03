@@ -41,7 +41,7 @@
 
 (define-syntax check
    (syntax-rules ()
-      ((check term desired)
+      ((check desired term)
          (let ((result term))
             (if (not (equal? result desired))
                (error "The computer says no." 
@@ -81,11 +81,10 @@
          (put mem ptr val))))
 
 ;; memory tests
-(check 
+(check 42 
    (-> (make-memory 10)
        (write (<< 0 2) 42)
-       (read (<< 0 2)))
-   42)
+       (read (<< 0 2))))
 
 ;;;
 ;;; Data Encoding
@@ -107,12 +106,12 @@
    (bor (<< payload 8) (bor (<< type 4) #b0100)))
 
 ;; encoding tests
-(check (immediate? (mk-fixnum 42)) #true)
-(check (imm-fixval (mk-fixnum 42)) 42)
-(check (fixnum? (mk-fixnum 42)) #true)
-(check (fixnum? (mk-immediate 0 0)) #false)
-(check (allocated? (mk-immediate 0 0)) #false)
-(check (allocated? (mk-fixnum 42)) #false)
+(check #true (immediate? (mk-fixnum 42)))
+(check 42 (imm-fixval (mk-fixnum 42)))
+(check #true (fixnum? (mk-fixnum 42)))
+(check #false (fixnum? (mk-immediate 0 0)))
+(check #false (allocated? (mk-immediate 0 0)))
+(check #false (allocated? (mk-fixnum 42)))
    
 ;;;
 ;;; GC
