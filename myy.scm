@@ -53,8 +53,8 @@
 
 ;; Allocated case
 ;; 
-;; ,------------------------------+----->  allocated object pointer to an *even* word
-;; |                              |
+;; ,------------------------------+-----> allocated object pointer to an *even* word
+;; |                              |,----> pairness (otherwise car is a header)
 ;;(s)______ ________ ________ ttttFiGG
 ;; |                        | |  |||||
 ;; `------------------------+ |  |||`+--> GC bits
@@ -63,6 +63,7 @@
 ;;                          |    `------> immediate object type (16 options)
 ;;                          `-----------> immediate payload (typically signed)
 ;; Immediate case
+
 
 (define (ptr n) (<< n 2))
 
@@ -105,6 +106,8 @@
 
 (define (mem-car mem ptr) (read mem ptr))
 (define (mem-cdr mem ptr) (read mem (+ ptr 4)))
+(define (mem-car! mem ptr val) (write mem ptr val))
+(define (mem-cdr! mem ptr val) (write mem (+ ptr 4) val))
    
 ;; memory tests
 (check 42 (-> (make-memory 10) (write (ptr 0) 42) (read (ptr 0))))
@@ -148,6 +151,57 @@
 ;;; GC
 ;;;
 
+(define (marked? word) (eq? 1 (band word 1)))
+
+(define (set-mark word)
+   (if (marked? word)
+      (error "trying to remark word " word)
+      (bor word 1)))
+
+(define (unset-mark word)
+   (if (marked? word)
+      (bxor word 1)
+      (error "trying to unmark unmarked " word)))
+
+(define (mark mem root)
+   (define (process mem ptr parent)
+      (if (immediate? ptr)
+         (backtrack mem ptr parent)
+         (lets
+            ((val (mem-car mem ptr))
+             (mem (mem-car! mem ptr (set-mark parent))))
+            (process mem val (set-mark ptr)))))
+   (define (backtrack mem ptr parent)
+      (cond
+         ((eq? parent 0)
+            (values mem ptr))
+         ((marked? parent)
+            (lets 
+               ((parent (unset-mark parent))
+                (foo (mem-cdr mem parent))
+                (mem (mem-cdr! mem parent (unset-mark (mem-car mem parent))))
+                (mem (mem-car! mem parent (set-mark ptr))))
+               (process mem foo parent)))
+         (else
+            (lets
+               ((foo (mem-cdr mem parent))
+                (mem (mem-cdr! mem ptr)))
+               (backtrack mem parent foo)))))
+   (process mem root 0))
+
+(check (mk-fixnum 42) (lets ((mem val (mark (make-memory 10) (mk-fixnum 42)))) val))
+(lets ((mem (make-memory 10))
+       (mem a (mem-cons mem (mk-fixnum 22) (mk-fixnum 33)))
+       (mem b (mem-cons mem (mk-fixnum 1) (mk-fixnum 2)))
+       (mem c (mem-cons mem (mk-fixnum 11) a))
+       (mem cp (mark mem c)))
+   (check #true (marked? (mem-car mem c)))
+   (check #false (marked? (mem-cdr mem c)))
+   (check #false (marked? (mem-car mem b)))
+   (check #false (marked? (mem-cdr mem b)))
+   (check #true (marked? (mem-car mem a)))
+   (check #false (marked? (mem-cdr mem a))))
+   
 
 ;;;
 ;;; Instruction format (de/encoding the number payload)
@@ -487,7 +541,7 @@
       (append c (list (mk-inst op-return 0 0)))))
 
 
-;; compiler&vm tests
+;; hosted compile and run tests
 
 (check 42 (run (compile 42)))
 (check #false (run (compile '(eq? 11 22))))
