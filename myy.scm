@@ -51,74 +51,6 @@
 ;;; Virtual memory
 ;;;
 
-(define (make-memory limit)
-   (if (even? limit)
-      (put #empty 'limit (* limit 8))
-      (error "list structured memory needs an even number of words, but got" limit)))
-
-(define (read mem ptr)
-   (cond
-      ((not (number? ptr))
-         (error "Bug: trying to read " ptr))
-      ((not (eq? (band ptr #b11) 0))
-         (error "Invalid pointer alignment in read: " ptr))
-      ((or (< ptr 0) (> ptr (getf mem 'limit)))
-         (error "Segmentation violation: reading " ptr))
-      (else
-         (let ((val (getf mem ptr)))
-            (if val val
-               (error "Invalid memory access: " ptr))))))
-
-(define (write mem ptr val)
-   (cond
-      ((not (number? ptr))
-         (error "Bug: trying to write " ptr))
-      ((not (eq? (band ptr #b11) 0))
-         (error "Invalid pointer alignment in write: " ptr))
-      ((or (< ptr 0) (> ptr (getf mem 'limit)))
-         (error "Segmentation violation: writing " ptr))
-      (else
-         (put mem ptr val))))
-
-(define (ptr n) (<< n 2))
-
-;; memory tests
-(check 42 (-> (make-memory 10) (write (ptr 0) 42) (read (ptr 0))))
-(check 42 (-> (make-memory 10) (write (ptr 5) 42) (read (ptr 5))))
-(check 42 (-> (make-memory 10) (write (ptr 3) 24) (write (ptr 3) 42) (read (ptr 3))))
-
-
-;;;
-;;; Data Encoding
-;;;
-
-(define (imm-payload n) (>> n 3))
-
-(define (imm-fixval n) (>> n 4))
-
-(define (allocated? n) (eq? 0 (band n #b100)))
-
-(define (immediate? n) (not (allocated? n)))
-
-(define (fixnum? n) (eq? #b1100 (band n #b1111)))
-
-(define (mk-fixnum n) (bor (<< n 4) #b1100))
-
-(define (mk-immediate type payload)
-   (bor (<< payload 8) (bor (<< type 4) #b0100)))
-
-;; encoding tests
-(check #true (immediate? (mk-fixnum 42)))
-(check 42 (imm-fixval (mk-fixnum 42)))
-(check #true (fixnum? (mk-fixnum 42)))
-(check #false (fixnum? (mk-immediate 0 0)))
-(check #false (allocated? (mk-immediate 0 0)))
-(check #false (allocated? (mk-fixnum 42)))
-   
-;;;
-;;; GC
-;;;
-
 ;; Allocated case
 ;; 
 ;; ,------------------------------+----->  allocated object pointer to an *even* word
@@ -131,6 +63,70 @@
 ;;                          |    `------> immediate object type (16 options)
 ;;                          `-----------> immediate payload (typically signed)
 ;; Immediate case
+
+(define (ptr n) (<< n 2))
+
+(define (make-memory limit)
+   (if (even? limit)
+      (-> #empty
+         (put 'end (* limit 8))
+         (put 'free (ptr 0)))
+      (error "list structured memory needs an even number of words, but got" limit)))
+
+(define (check-pointer mem ptr)
+   (cond
+      ((not (number? ptr))
+         (error "Bug: invalid pointer: " ptr))
+      ((< ptr 0)
+         (error "Pointer below memory: start: " ptr))
+      ((not (< ptr (getf mem 'end)))
+         (error "Pointer past memory end: " ptr))
+      ((not (eq? 0 (band ptr #b11)))
+         (error "Misaligned pointer: " ptr))))
+
+(define (read mem ptr)
+   (check-pointer mem ptr)
+   (let ((val (getf mem ptr)))
+      (if val val
+         (error "Invalid memory access: " ptr))))
+
+(define (write mem ptr val)
+   (check-pointer mem ptr)
+   (put mem ptr val))
+
+
+;; memory tests
+(check 42 (-> (make-memory 10) (write (ptr 0) 42) (read (ptr 0))))
+(check 42 (-> (make-memory 10) (write (ptr 5) 42) (read (ptr 5))))
+(check 42 (-> (make-memory 10) (write (ptr 3) 24) (write (ptr 3) 42) (read (ptr 3))))
+
+
+;;;
+;;; Data Encoding
+;;;
+
+(define (imm-payload n) (>> n 3))
+(define (imm-fixval n) (>> n 4))
+(define (allocated? n) (eq? 0 (band n #b100)))
+(define (immediate? n) (not (allocated? n)))
+(define (fixnum? n) (eq? #b1100 (band n #b1111)))
+(define (mk-fixnum n) (bor (<< n 4) #b1100))
+(define (mk-immediate type payload)
+   (bor (<< payload 8) (bor (<< type 4) #b0100)))
+
+;; encoding tests
+(check #true (immediate? (mk-fixnum 42)))
+(check 42 (imm-fixval (mk-fixnum 42)))
+(check #true (fixnum? (mk-fixnum 42)))
+(check #false (fixnum? (mk-immediate 0 0)))
+(check #false (allocated? (mk-immediate 0 0)))
+(check #false (allocated? (mk-fixnum 42)))
+
+   
+;;;
+;;; GC
+;;;
+
 
 
 ;;;
