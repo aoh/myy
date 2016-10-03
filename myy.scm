@@ -243,6 +243,8 @@
             (values s e (if (list-ref s a) (car c) (cdr c)) d))
          (op-list
             (values (cons (list (list-ref s a)) s) e c d))
+         (op-load-env
+            (values (cons (list-ref (list-ref e a) b) s) e c d))
          (else
             (error "Myy unknown instruction: " op)))))
 
@@ -386,8 +388,8 @@
 (define (add-name s exp name)
    (cond
       ((null? s) 
-         (error "bug: add-name: not in stack: " exp))
-      ((eq? (caar s) exp)
+         (error "bug: add-name: not in stack: " (str exp)))
+      ((has? (car s) exp)
          (cons (append (car s) (list name))
                (cdr s)))
       (else
@@ -431,11 +433,11 @@
             (values
                (cons (list exp) s)
                (list (mk-inst-unary op-load-pos pos)))))
-      ;((and (symbol? exp) (env-find e exp)) =>
-      ;   (lambda (place)
-      ;      (values
-      ;         (cons (list exp) s)
-      ;         (list (mk-inst op-load-env (car place) (cdr place))))))
+      ((and (symbol? exp) (env-find e exp)) =>
+         (lambda (place)
+            (values
+               (cons (list exp) s)
+               (list (mk-inst op-load-env (car place) (cdr place))))))
       ((symbol? exp)
          (error "myy unbound: " exp))
       ((lambda? exp)
@@ -501,7 +503,9 @@
 (check #true (run (compile '(eq? (- 100 (+ 11 22)) (- (- 100 11) 22)))))
 (check 111 (run (compile '((lambda (op) (op 111)) (lambda (x) x)))))
 (check #true (run (compile '(eq? 42 ((lambda (x) x) 42)))))
-;(check 42 (run (compile '((lambda (op) (op 111)) ((lambda (x) (lambda (y) x)) 42)))))
+(check #true (run (compile '(eq? ((lambda (x) 42) 43) ((lambda (x) x) 42)))))
+(check 1111 (run (compile '((lambda (x) (x 1111)) ((lambda (x) (lambda (y) y)) 2222)))))
+(check 2222 (run (compile '((lambda (x) (x 1111)) ((lambda (x) (lambda (y) x)) 2222)))))
 
 
 ;; ------------------------------------------ 8< ------------------------------------------
