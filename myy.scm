@@ -80,7 +80,7 @@
       ((< ptr 0)
          (error "Pointer below memory: start: " ptr))
       ((not (< ptr (getf mem 'end)))
-         (error "Pointer past memory end: " ptr))
+         (error "Pointer past memory end: " (list 'pointer ptr 'end (getf mem 'end))))
       ((not (eq? 0 (band ptr #b11)))
          (error "Misaligned pointer: " ptr))))
 
@@ -94,11 +94,32 @@
    (check-pointer mem ptr)
    (put mem ptr val))
 
+(define (mem-cons mem a b)
+   (let ((free (getf mem 'free)))
+      (values
+         (-> mem
+            (put 'free (+ free 8))
+            (write free a)
+            (write (+ free 4) b))
+         free)))
 
+(define (mem-car mem ptr) (read mem ptr))
+(define (mem-cdr mem ptr) (read mem (+ ptr 4)))
+   
 ;; memory tests
 (check 42 (-> (make-memory 10) (write (ptr 0) 42) (read (ptr 0))))
 (check 42 (-> (make-memory 10) (write (ptr 5) 42) (read (ptr 5))))
 (check 42 (-> (make-memory 10) (write (ptr 3) 24) (write (ptr 3) 42) (read (ptr 3))))
+(check 20
+   (lets ((m (make-memory 10))
+          (m ptr (mem-cons m 22 2)))
+      (- (mem-car m ptr) (mem-cdr m ptr))))
+(check 11
+   (lets ((m (make-memory 10))
+          (m a (mem-cons m 11 22))
+          (m b (mem-cons m 33 a)))
+      (mem-car m (mem-cdr m b))))
+   
 
 
 ;;;
