@@ -672,10 +672,10 @@
 
 ;; hosted compile and run tests
 
-(check 42 (run (compile 42)))
-(check #false (run (compile '(eq? 11 22))))
-(check #true (run (compile '(eq? 11 11))))
-(check 42 (run (compile '((lambda (x) x) 42))))
+;(check 42 (run (compile 42)))
+;(check #false (run (compile '(eq? 11 22))))
+;(check #true (run (compile '(eq? 11 11))))
+;(check 42 (run (compile '((lambda (x) x) 42))))
 ;(check #false (run (compile '((lambda (x) ((lambda (y) (eq? x y)) 42)) 101))))
 ;(check #true (run (compile '((lambda (x) ((lambda (y) (eq? x y)) 42)) 42))))
 ;(check #true (run (compile '(eq? (eq? 1 1) (eq? 2 2)))))
@@ -689,9 +689,9 @@
 ;(check #true (run (compile '(eq? ((lambda (x) 42) 43) ((lambda (x) x) 42)))))
 ;(check 1111 (run (compile '((lambda (x) (x 1111)) ((lambda (x) (lambda (y) y)) 2222)))))
 ;(check 2222 (run (compile '((lambda (x) (x 1111)) ((lambda (x) (lambda (y) x)) 2222)))))
-(check 12 (run (compile '(if (eq? 1 2) 11 12))))
+;(check 12 (run (compile '(if (eq? 1 2) 11 12))))
 
-'(check 44 (run (compile '
+(check 44 (run (compile '
    ((lambda (dup self swap twice)
       ((lambda (quad)
          (self (swap (self 11) (self quad))))
