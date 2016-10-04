@@ -2,6 +2,10 @@
 ;;; Sexp mathing
 ;;;
 
+;; todo: add cons, car, cdr, set-car and set-cdr
+;; todo: add some crude macro support
+;; todo: try out something nontrivial that needs GC in C, and add it there
+
 (define (match exp pat)
    (define (matcher exp pat tail)
       (cond
