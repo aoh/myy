@@ -718,10 +718,14 @@
     (lambda (a b) (b a))
     (lambda (op x) (op (op x)))))))
 
-(check 1 (run (compile 
+(check 4 (run (compile 
    '((lambda (pred)
          ((lambda (walk)
-            (walk walk 90))
+            ((lambda (work)
+               ((lambda (a b c d)
+                  (+ (+ a b) (+ c d)))
+                 (work) (work) (work) (work)))
+               (lambda () (walk walk 900))))
             (lambda (self x)
                (if (eq? x 1)
                   x
