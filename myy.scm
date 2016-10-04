@@ -47,9 +47,11 @@
                (error "The computer says no." 
                   (str (quote term) " is " result " instead of " desired ".")))))))
 
+
 ;;;
-;;; Virtual memory
+;;; Data Encoding
 ;;;
+
 
 ;; Allocated case
 ;; 
@@ -67,23 +69,6 @@
 
 
 (define (ptr n) (<< n 2))
-;;;
-;;; Data Encoding
-;;;
-
-;; Allocated case
-;; 
-;; ,------------------------------+-----> allocated object pointer to an *even* word
-;; |                              |,----> pairness if alloc (otherwise car is a header)
-;; |                              ||
-;;(s)______ ________ ________ tttttPIG
-;; |                        | |   ||||
-;; |                        | |   |||`--> GC flag
-;; `------------------------+ |   ||`---> immediateness
-;;                          | '---+`----> fixnumness if immediate
-;;                          |     `-----> immediate object type (32 options)
-;;                          `-----------> immediate payload (typically signed)
-;; Immediate case
 (define (imm-fixval n) (>> n 3))
 (define (allocated? n) (eq? 0 (band n #b10)))
 (define (immediate? n) (not (allocated? n)))
@@ -182,7 +167,6 @@
 ;;; GC
 ;;;
 
-
 (define (mark mem root)
    (define (process mem ptr parent)
       (if (immediate? ptr)
@@ -218,8 +202,7 @@
        (mem a (mem-cons mem (mk-fixnum 22) (mk-fixnum 33)))
        (mem b (mem-cons mem (mk-fixnum 1) (mk-fixnum 2)))
        (mem c (mem-cons mem (mk-fixnum 11) a))
-       (mem cp (mark mem c))
-       (sweeped (sweep mem)))
+       (mem cp (mark mem c)))
    (check #true (marked? (mem-car mem c)))
    (check #false (marked? (mem-cdr mem c)))
    (check #false (marked? (mem-car mem b)))
@@ -319,6 +302,7 @@
                    (fb (list-ref s b)))
                (values (cons (- fa fb) s) e c d)))
          (op-if
+            (print "if on stack " s)
             (values s e (if (list-ref s a) (car c) (cdr c)) d))
          (op-list
             (values (cons (list (list-ref s a)) s) e c d))
@@ -464,6 +448,11 @@
         (= (length exp) 3)
         (eq? (car exp) 'lambda)))
 
+(define (if? exp)
+   (and (list? exp)
+        (= (length exp) 4)
+        (eq? (car exp) 'if)))
+  
 (define (add-name s exp name)
    (cond
       ((null? s) 
@@ -531,6 +520,16 @@
          (let ((comp (first-unavailable s (if (or (prim? (car exp)) (lambda? (car exp))) (cdr exp) exp))))
             ;(print " - first unavailable is " comp)
             (cond
+               ((if? exp)
+                  (lets
+                     ((s code (compiler (cadr exp)  s e))
+                      (sp then (compiler (caddr exp) s e))
+                      (sp else (compiler (cadddr exp) s e)))
+                     (values sp
+                        (append code
+                           (ilist 
+                              (mk-inst op-if (stack-find s (cadr exp)) 0)
+                              then else)))))
                (comp
                   (lets
                      ((s code (compiler comp s e))
@@ -585,7 +584,7 @@
 (check #true (run (compile '(eq? ((lambda (x) 42) 43) ((lambda (x) x) 42)))))
 (check 1111 (run (compile '((lambda (x) (x 1111)) ((lambda (x) (lambda (y) y)) 2222)))))
 (check 2222 (run (compile '((lambda (x) (x 1111)) ((lambda (x) (lambda (y) x)) 2222)))))
-
+(check 12 (run (compile '(if (eq? 1 2) 11 12))))
 
 ;; ------------------------------------------ 8< ------------------------------------------
 
