@@ -338,13 +338,21 @@
          (mem-car mem lptr))
       (else
          (mem-list-ref mem (mem-cdr mem lptr) (- n 1)))))
-    
+
+(define (mem-arg-list mem s offs)
+   (if (myy-null? offs)
+      (values mem myy-null)
+      (lets 
+         ((mem tl (mem-arg-list mem s (mem-cdr mem offs)))
+          (hd (mem-list-ref mem s (fixnum-val (mem-car mem offs)))))
+         (mem-cons mem hd tl))))
+      
 (define (execute mem s e c d instruction)
-   (print "SECD VM")
-   (print "  - s " (read-memory-object mem s))
-   (print "  - e " (read-memory-object mem e))
-   (print "  - c " (read-memory-object mem c))
-   (print "  - d " (read-memory-object mem d))
+   ;(print "SECD VM")
+   ;(print "  - s " (read-memory-object mem s))
+   ;(print "  - e " (read-memory-object mem e))
+   ;(print "  - c " (read-memory-object mem c))
+   ;(print "  - d " (read-memory-object mem d))
    (lets ((op a b (decode-inst (fixnum-val instruction))))
       (print "  - exec " op ": " a ", " b)
       (case op
@@ -396,24 +404,24 @@
                    (mem s (mem-cons mem x s)))
                (values mem s e c d)))
          (op-if
-            (error "unhandled " op)
-            (values s e (if (list-ref s a) (car c) (cdr c)) d))
+            (values mem s e
+               (if (eq? (mem-list-ref mem s a) myy-false) (mem-cdr mem c) (mem-car mem c))
+               d))
          (op-load-env
-            (error "unhandled " op)
-            (values (cons (list-ref (list-ref e a) b) s) e c d))
+            (lets ((val (mem-list-ref mem (mem-list-ref mem e a) b))
+                   (mem s (mem-cons mem val s)))
+               (values mem s e c d)))
          (op-call 
-            (error "unhandled " op)
             (lets
-               ((rator (list-ref s a))
+               ((rator (mem-list-ref mem s a))
                 (arity b)
-                (args (map (lambda (x) (list-ref s x)) (car c))))
-               (if (closure? rator)
-                  (values
-                     args
-                     (caddr rator)
-                     (cadr rator)
-                     (cons (list s e (cdr c)) d))
-                  (error "bad rator: " rator))))
+                (mem args (mem-arg-list mem s (mem-car mem c)))
+                (mem x (mem-cons mem (mem-cdr mem c) myy-null)) ;; dump 1st node
+                (mem x (mem-cons mem e x))
+                (mem x (mem-cons mem s x))
+                (mem d (mem-cons mem x d)))
+               ;; check closureness and arity later
+               (values mem args (mem-cdr mem rator) (mem-car mem rator) d)))
          (else
             (error "Myy unknown instruction: " op)))))
 
@@ -425,8 +433,8 @@
              (e1 (mem-car mem state)) (state (mem-cdr mem state))
              (c1 (mem-car mem state))
              (rval (mem-car mem s))
-             (mem s1 (mem-cons rval s1)))
-            (values s1 e1 c1 d))
+             (mem s1 (mem-cons mem rval s1)))
+            (values mem s1 e1 c1 d))
       (execute mem s e (mem-cdr mem c) d (mem-car mem c))))
 
 ;; VM transition checks
