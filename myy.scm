@@ -193,25 +193,24 @@
             (if (marked? val)
                (backtrack mem ptr parent)
                (let ((mem (mem-car! mem ptr (set-mark parent))))
-                  (process mem val (set-mark ptr)))))))
+                  (process mem val (bor ptr 2)))))))
    (define (backtrack mem ptr parent)
       (cond
          ((eq? parent myy-null)
             (values mem ptr))
-         ((marked? parent)
+         ((eq? 2 (band parent 2)) ;; car is done
             (lets 
-               ((parent (unset-mark parent))
+               ((parent (bxor parent 2))
                 (foo (mem-cdr mem parent))
                 (mem (mem-cdr! mem parent (unset-mark (mem-car mem parent))))
                 (mem (mem-car! mem parent (set-mark ptr))))
                (process mem foo parent)))
-         (else
+         (else ;; cdr is done
             (lets
                ((foo (mem-cdr mem parent))
                 (mem (mem-cdr! mem parent ptr)))
                (backtrack mem parent foo)))))
    (process mem root myy-null))
-
 
 
 (check (mk-fixnum 42) (lets ((mem val (mark (make-memory 10) (mk-fixnum 42)))) val))
@@ -315,6 +314,7 @@
 (define op-if             13)
 (define op-add            14)
 (define op-sub            15)
+(define op-set            16)
 
 (define (mk-closure mem code stack env)
    (lets 
@@ -352,11 +352,6 @@
          (mem-cons mem hd tl))))
       
 (define (execute mem s e c d instruction)
-   ;(print "SECD VM")
-   ;(print "  - s " (read-memory-object mem s))
-   ;(print "  - e " (read-memory-object mem e))
-   ;(print "  - c " (read-memory-object mem c))
-   ;(print "  - d " (read-memory-object mem d))
    (lets ((op a b (decode-inst (fixnum-val instruction))))
       (print "  - exec " op ": " a ", " b)
       (case op
@@ -429,17 +424,27 @@
          (else
             (error "Myy unknown instruction: " op)))))
 
+      
+(define (do-gc mem s e c d)
+   (lets
+      ((mem s (mark mem s))
+       (mem e (mark mem e))
+       (mem c (mark mem c))
+       (mem d (mark mem d)))
+      (sweep mem)))
+       
 (define (transition mem s e c d)
-   (if (myy-null? c)
-      (lets ((state (mem-car mem d))
-             (d (mem-cdr mem d))
-             (s1 (mem-car mem state)) (state (mem-cdr mem state))
-             (e1 (mem-car mem state)) (state (mem-cdr mem state))
-             (c1 (mem-car mem state))
-             (rval (mem-car mem s))
-             (mem s1 (mem-cons mem rval s1)))
-            (values mem s1 e1 c1 d))
-      (execute mem s e (mem-cdr mem c) d (mem-car mem c))))
+   (let ((mem (do-gc mem s e c d)))
+      (if (myy-null? c)
+         (lets ((state (mem-car mem d))
+                (d (mem-cdr mem d))
+                (s1 (mem-car mem state)) (state (mem-cdr mem state))
+                (e1 (mem-car mem state)) (state (mem-cdr mem state))
+                (c1 (mem-car mem state))
+                (rval (mem-car mem s))
+                (mem s1 (mem-cons mem rval s1)))
+               (values mem s1 e1 c1 d))
+         (execute mem s e (mem-cdr mem c) d (mem-car mem c)))))
 
 ;; VM transition checks
 (define-syntax check-transition
