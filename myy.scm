@@ -242,7 +242,7 @@
 (define op-load-pos        3)
 (define op-return          4)
 (define op-load-env        5)
-(define op-list            6)
+(define op-call            6)
 (define op-cons            7)
 (define op-car             8)
 (define op-cdr             9)
@@ -252,6 +252,7 @@
 (define op-if             13)
 (define op-add            14)
 (define op-sub            15)
+(define op-list1          16)
 
 (define (mk-closure code stack env)
    (list 'closure code (cons stack env)))
@@ -268,7 +269,7 @@
       (else
          (error "Cannot apply " rator))))
       
-(define* (execute s e c d instruction)
+(define (execute s e c d instruction)
    (print "EXEC " instruction)
    (lets ((op a b (decode-inst instruction)))
       (case op
@@ -304,14 +305,26 @@
          (op-if
             (print "if on stack " s)
             (values s e (if (list-ref s a) (car c) (cdr c)) d))
-         (op-list
+         (op-list1
             (values (cons (list (list-ref s a)) s) e c d))
          (op-load-env
             (values (cons (list-ref (list-ref e a) b) s) e c d))
+         (op-call 
+            (lets
+               ((rator (list-ref s a))
+                (arity b)
+                (args (map (lambda (x) (list-ref s x)) (car c))))
+               (if (closure? rator)
+                  (values
+                     args
+                     (caddr rator)
+                     (cadr rator)
+                     (cons (list s e (cdr c)) d))
+                  (error "bad rator: " rator))))
          (else
             (error "Myy unknown instruction: " op)))))
 
-(define* (transition s e c d)
+(define (transition s e c d)
    (if (null? c)
       (lets ((state d d))
          (apply
@@ -349,13 +362,13 @@
 ;;; SECD VM
 ;;;
 
-(define* (vm s e c d)
+(define (vm s e c d)
    (if (null? d)
       (car s)
       (lets ((s e c d (transition s e c d)))
          (vm s e c d))))
 
-(define* (run c)
+(define (run c)
    (vm null null c `((null null ,(list (mk-inst op-return 0 0))))))
 
 ;; vm run checks
@@ -404,15 +417,12 @@
 ;; s = (exp-evaluated-if-known . names-for-it)
 
 (define (stack-find s exp)
-   (print "looking for '" exp "' from stack " s)
    ;(for-each (lambda (node) (print "  - '" (car node) "' is known as " (cdr node))) s)
    (let loop ((s s) (p 0))
       (cond
          ((null? s) #false)
          ;((eq? (caar s) exp) p)
-         ((has? (car s) exp)
-            (print " - " exp " is at " p)
-            p)
+         ((has? (car s) exp) p)
          (else (loop (cdr s) (+ p 1))))))
 
 (define (first-unavailable s lst)
@@ -547,20 +557,24 @@
                      (values 
                         (cons (append (car s) (list exp)) (cdr s))
                         code)))
-               ((= (length exp) 2)
-                  (lets
-                     ((pos (stack-find s (cadr exp)))
-                      (s (cons (list exp) s))
-                      (rp (stack-find s (car exp))))
-                     (values
-                        s
-                        (list (mk-inst op-list pos 0) (mk-inst op-apply rp 0)))))
+               ;((= (length exp) 2)
+               ;   (lets
+               ;      ((pos (stack-find s (cadr exp)))
+               ;       (s (cons (list exp) s))
+               ;       (rp (stack-find s (car exp))))
+               ;      (values
+               ;         s
+               ;         (list (mk-inst op-list1 pos 0) (mk-inst op-apply rp 0)))))
                (else
-                  (error "could compile call " (str "call: " exp "\nstack: " s))))))
+                  (values 
+                     (cons (list exp) s)
+                     (list 
+                        (mk-inst op-call (stack-find s (car exp)) (length (cdr exp)))
+                        (map (lambda (x) (stack-find s x)) (cdr exp))))))))
       (else
          (error "compiler: what is " exp))))
 
-(define* (compile exp)
+(define (compile exp)
    (lets ((s c (compiler exp null null)))
       (append c (list (mk-inst op-return 0 0)))))
 
@@ -585,6 +599,16 @@
 (check 1111 (run (compile '((lambda (x) (x 1111)) ((lambda (x) (lambda (y) y)) 2222)))))
 (check 2222 (run (compile '((lambda (x) (x 1111)) ((lambda (x) (lambda (y) x)) 2222)))))
 (check 12 (run (compile '(if (eq? 1 2) 11 12))))
+
+(check 44 (run (compile '
+   ((lambda (dup self swap twice)
+      ((lambda (quad)
+         (self (swap (self 11) (self quad))))
+       (lambda (x) (twice dup x))))
+    (lambda (x) (+ x x))
+    (lambda (x) x)
+    (lambda (a b) (b a))
+    (lambda (op x) (op (op x)))))))
 
 ;; ------------------------------------------ 8< ------------------------------------------
 
