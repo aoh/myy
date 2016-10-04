@@ -35,6 +35,8 @@
       ((sexp-case var . cases)
          (sexp-cases var . cases))))
 
+
+
 ;;; 
 ;;; Minimal testing
 ;;;
@@ -67,13 +69,18 @@
 ;;                          `-----------> immediate payload (typically signed)
 ;; Immediate case
 
+;; object types in memory
+;;  - nonpair, header is alloc -> function [lambda-code . env]
+
 
 (define (ptr n) (<< n 2))
 (define (imm-fixval n) (>> n 3))
 (define (allocated? n) (eq? 0 (band n #b10)))
 (define (immediate? n) (not (allocated? n)))
 (define (fixnum? n) (eq? #b110 (band n #b110)))
+(define (mem-pair? n) (eq? #b100 (band n #b110)))
 (define (mk-fixnum n) (bor (<< n 3) #b110))
+(define (fixnum-val n) (>> n 3))
 (define (mk-immediate type payload)
    (bor (<< payload 8) (bor (<< type 3) #b010)))
 
@@ -112,10 +119,12 @@
    (check-pointer mem ptr)
    (put mem ptr val))
 
-(define (mem-car mem ptr) (read mem ptr))
-(define (mem-cdr mem ptr) (read mem (+ ptr 4)))
-(define (mem-car! mem ptr val) (write mem ptr val))
-(define (mem-cdr! mem ptr val) (write mem (+ ptr 4) val))
+;; remove pairness bit if present
+(define (maybe-untag ptr) (if (eq? 0 (band ptr #b100)) ptr (bxor ptr #b100)))
+(define (mem-car mem ptr) (read mem (maybe-untag ptr)))
+(define (mem-cdr mem ptr) (read mem (+ (maybe-untag ptr) 4)))
+(define (mem-car! mem ptr val) (write mem (maybe-untag ptr) val))
+(define (mem-cdr! mem ptr val) (write mem (+ (maybe-untag ptr) 4) val))
    
 (define (set-mark word)
    (if (marked? word)
@@ -126,6 +135,8 @@
    (if (marked? word)
       (bxor word 1)
       (error "trying to unmark unmarked " word)))
+
+;; GC - sweep 
 
 (define (sweep mem)
    (let loop ((mem mem) (pos (- (get mem 'end 8) 8)) (free 0))
@@ -142,7 +153,7 @@
          (-> #empty (put 'end (* limit 8))))
       (error "list structured memory needs an even number of words, but got" limit)))
 
-(define (mem-cons mem a b)
+(define (mem-pair mem a b)
    (let ((free (getf mem 'free)))
       (if (eq? free myy-null)
          (error "gc needed")
@@ -153,18 +164,19 @@
                (write (+ free 4) b))
             free))))
 
+(define (mem-cons mem a b)
+   (lets ((mem desc (mem-pair mem a b)))
+      (values mem (bor desc #b100))))
+   
 ;; memory tests
 (check 42 (-> (make-memory 10) (write (ptr 0) 42) (read (ptr 0))))
 (check 42 (-> (make-memory 10) (write (ptr 5) 42) (read (ptr 5))))
 (check 42 (-> (make-memory 10) (write (ptr 3) 24) (write (ptr 3) 42) (read (ptr 3))))
 (check 20 (lets ((m (make-memory 10)) (m ptr (mem-cons m 22 2))) (- (mem-car m ptr) (mem-cdr m ptr))))
 (check 11 (lets ((m (make-memory 10)) (m a (mem-cons m 11 22)) (m b (mem-cons m 33 a))) (mem-car m (mem-cdr m b))))
-   
-
-
   
 ;;;
-;;; GC
+;;; GC - marking 
 ;;;
 
 (define (mark mem root)
@@ -252,7 +264,6 @@
 (define op-if             13)
 (define op-add            14)
 (define op-sub            15)
-(define op-list1          16)
 
 (define (mk-closure code stack env)
    (list 'closure code (cons stack env)))
@@ -268,10 +279,11 @@
                rands cenv ccode (cons (list s e c) d))))
       (else
          (error "Cannot apply " rator))))
-      
+
+    
 (define (execute s e c d instruction)
-   (print "EXEC " instruction)
    (lets ((op a b (decode-inst instruction)))
+      (print "EXEC " op ": " a ", " b)
       (case op
          (op-apply
             (lets
@@ -305,8 +317,6 @@
          (op-if
             (print "if on stack " s)
             (values s e (if (list-ref s a) (car c) (cdr c)) d))
-         (op-list1
-            (values (cons (list (list-ref s a)) s) e c d))
          (op-load-env
             (values (cons (list-ref (list-ref e a) b) s) e c d))
          (op-call 
@@ -359,6 +369,51 @@
 
 
 ;;;
+;;; Data transfer to virtual memory, simple acyclic version for compiler output
+;;;
+
+(define* (create-memory obj mem-size)
+   ;; mem obj -> mem descriptor
+   (define (burn mem obj)
+      (cond
+         ((number? obj)
+            (values mem (mk-fixnum obj)))
+         ((pair? obj)
+            (lets ((mem hd (burn mem (car obj)))
+                   (mem tl (burn mem (cdr obj))))
+               (mem-cons mem hd tl)))
+         ((null? obj)
+            (values mem myy-null))
+         (else
+            (error "burn: how should i encode " obj))))
+   (burn 
+      (make-memory mem-size)
+      obj))
+
+(define* (read-memory-object mem ptr)
+   (cond
+      ((immediate? ptr)
+         (cond
+            ((eq? ptr myy-null)
+               '())
+            ((fixnum? ptr)
+               (fixnum-val ptr))
+            (else
+               (str "[IMMEDIATE " ptr "]"))))
+      ((mem-pair? ptr)
+         (cons (read-memory-object mem (mem-car mem ptr))
+               (read-memory-object mem (mem-cdr mem ptr))))
+      (else 
+         (str "[ALLOC " ptr "]"))))
+
+(check 42 (lets ((mem ptr (create-memory 42 10))) (read-memory-object mem ptr)))     
+(check (cons 1 2) (lets ((mem ptr (create-memory (cons 1 2) 10))) (read-memory-object mem ptr)))
+(let ((val '(1 2 3 (4 . 5) . 6)))
+   (check val (lets ((mem ptr (create-memory val 10))) (read-memory-object mem ptr))))
+
+
+
+;;;
 ;;; SECD VM
 ;;;
 
@@ -404,15 +459,6 @@
 ;;;
 ;;; SECD Compiler
 ;;;
-
-;; value that need not be evaluated
-(define (simple? val)
-   (or (symbol? val)
-       (number? val)
-       (and (pair? val) (eq? (car val) 'quote))))
-
-(define (complex? x) 
-   (not (simple? x)))
 
 ;; s = (exp-evaluated-if-known . names-for-it)
 
@@ -557,14 +603,6 @@
                      (values 
                         (cons (append (car s) (list exp)) (cdr s))
                         code)))
-               ;((= (length exp) 2)
-               ;   (lets
-               ;      ((pos (stack-find s (cadr exp)))
-               ;       (s (cons (list exp) s))
-               ;       (rp (stack-find s (car exp))))
-               ;      (values
-               ;         s
-               ;         (list (mk-inst op-list1 pos 0) (mk-inst op-apply rp 0)))))
                (else
                   (values 
                      (cons (list exp) s)
@@ -610,19 +648,27 @@
     (lambda (a b) (b a))
     (lambda (op x) (op (op x)))))))
 
+
+
+
+
+
 ;; ------------------------------------------ 8< ------------------------------------------
 
-;; varying output for $ watch -n 0.2 "ol myy.scm | tail -n 20"
+;; varying output for $ watch -n 0.1 "ol myy.scm | tail -n 20"
+
 (lets 
    ((t (time-ms))
     (cs '(#\space #\▐  #\▌ #\█))
-    (rcs (reverse cs)))
-   (print 
-      (list->string 
+    (rcs (reverse cs))
+    (out
+       (list->string 
          (ilist #\newline #\space #\space #\░ 
             (reverse
                (cons #\░ 
                   (map (lambda (x) (list-ref cs (band (>> t (<< x 1)) #b11)))
-                       (iota 0 1 30))))))))
+                       (iota 0 1 25))))))))
+   (print out))
+   
    
 
