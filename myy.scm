@@ -462,7 +462,29 @@
 ;(check-transition '(x x RESULT) 'XE (list (mk-inst op-return 2 0)) '((S E C) . D)  => '(RESULT . S) 'E 'C 'D)
 
 
+;;;
+;;; C generation
+;;;
 
+(define (heap-array mem)
+   (let ((start "int *heap = {")
+         (end "};"))
+      (str start
+         (let loop ((pos (- (getf mem 'free) 4)) (out end))
+            (if (eq? pos -4)
+               out
+               (loop (- pos 4) 
+                  (str (read mem pos)
+                     (if (eq? out end)
+                        out
+                        (str ", " out)))))))))
+      
+(define* (dump-heap mem)
+   (lets
+       ((arr (heap-array mem))
+        (port (open-output-file "out.c")))
+      (print-to port arr)
+      (close-port port)))
 
 
 ;;;
@@ -479,7 +501,9 @@
 (define (run c)
    (lets ((mem cp (create-memory c 1024))
           (mem ret (burn mem `((,null ,null ,(list (mk-inst op-return 0 0)))))))
+      (dump-heap mem)
       (vm mem myy-null myy-null cp ret)))
+
 
 ;; vm run checks
 ;(check 42 (run (list (mk-inst op-load-immediate 42 0) (mk-inst op-return 0 0))))
@@ -675,7 +699,6 @@
     (lambda (x) x)
     (lambda (a b) (b a))
     (lambda (op x) (op (op x)))))))
-
 
 
 
