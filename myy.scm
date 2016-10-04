@@ -251,7 +251,7 @@
 ;;; Data transfer to virtual memory, simple acyclic version for compiler output
 ;;;
 
-(define* (burn mem obj)
+(define (burn mem obj)
    (cond
       ((number? obj)
          (values mem (mk-fixnum obj)))
@@ -274,8 +274,9 @@
    (cond
       ((immediate? ptr)
          (cond
-            ((eq? ptr myy-null)
-               '())
+            ((eq? ptr myy-null) '())
+            ((eq? ptr myy-true) #true)
+            ((eq? ptr myy-false) #false)
             ((fixnum? ptr)
                (fixnum-val ptr))
             (else
@@ -311,8 +312,11 @@
 (define op-add            14)
 (define op-sub            15)
 
-(define (mk-closure code stack env)
-   (list 'closure code (cons stack env)))
+(define (mk-closure mem code stack env)
+   (lets 
+      ((mem x (mem-cons mem stack env))
+       (mem x (mem-pair mem code x))) ;; non-pair, alloc at car
+      (values mem x)))
 
 (define (closure? thing)
    (and (pair? thing) (eq? 'closure (car thing))))
@@ -351,9 +355,9 @@
                (error "unhandled " op)
                (vm-apply s e c d rator rands)))
          (op-close 
-            (error "unhandled " op)
-            (values
-               (cons (mk-closure (car c) s e) s) e (cdr c) d))
+            (lets ((mem clos (mk-closure mem (mem-car mem c) s e))
+                   (mem s (mem-cons mem clos s)))
+               (values mem s e (mem-cdr mem c) d)))
          (op-return 
             (lets ((rval (mem-list-ref mem s a))
                    (st (mem-car mem d))
@@ -370,24 +374,27 @@
                (print "Loading immediate " (>> instruction 6))
                (values mem s e c d)))
          (op-load-pos
-            (error "unhandled " op)
-            (values (cons (list-ref s a) s) e c d))
+            (lets ((mem s (mem-cons mem (mem-list-ref mem s a) s)))
+               (values mem s e c d)))
          (op-load-value
             (lets ((mem s (mem-cons mem (mem-car mem c) s)))
                (values mem s e (mem-cdr mem c) d)))
          (op-equal
-            (error "unhandled " op)
-            (values (cons (eq? (list-ref s a) (list-ref s b)) s) e c d))
+            (lets ((res (if (eq? (mem-list-ref mem s a) (mem-list-ref mem s b)) myy-true myy-false))
+                   (mem s (mem-cons mem res s)))
+               (values mem s e c d)))
          (op-add
-            (error "unhandled " op)
-            (lets ((fa (list-ref s a))
-                   (fb (list-ref s b)))
-               (values (cons (+ fa fb) s) e c d)))
+            (lets ((a (mem-list-ref mem s a))
+                   (b (mem-list-ref mem s b))
+                   (x (mk-fixnum (+ (fixnum-val a) (fixnum-val b))))
+                   (mem s (mem-cons mem x s)))
+               (values mem s e c d)))
          (op-sub
-            (error "unhandled " op)
-            (lets ((fa (list-ref s a))
-                   (fb (list-ref s b)))
-               (values (cons (- fa fb) s) e c d)))
+            (lets ((a (mem-list-ref mem s a))
+                   (b (mem-list-ref mem s b))
+                   (x (mk-fixnum (- (fixnum-val a) (fixnum-val b))))
+                   (mem s (mem-cons mem x s)))
+               (values mem s e c d)))
          (op-if
             (error "unhandled " op)
             (values s e (if (list-ref s a) (car c) (cdr c)) d))
