@@ -468,22 +468,22 @@
 
 (define (heap-array mem)
    (let ((start "int *heap = {")
-         (end "};"))
+         (end "3};")) ;; use invalid descriptor 3 as heap end marker
       (str start
          (let loop ((pos (- (getf mem 'free) 4)) (out end))
             (if (eq? pos -4)
                out
                (loop (- pos 4) 
                   (str (read mem pos)
-                     (if (eq? out end)
-                        out
-                        (str ", " out)))))))))
+                     (str ", " out))))))))
       
-(define* (dump-heap mem)
+(define* (dump-heap mem entry-pair)
+   (print "Dumping " (read-memory-object mem entry-pair))
    (lets
        ((arr (heap-array mem))
         (port (open-output-file "out.c")))
       (print-to port arr)
+      (print-to port "entry = " entry-pair ";\n")
       (close-port port)))
 
 
@@ -492,7 +492,7 @@
 ;;;
 
 (define (vm mem s e c d)
-   (print "vm " s ", " e ", " c ", " d)
+   ;(print "vm " s ", " e ", " c ", " d)
    (if (myy-null? d)
       (read-memory-object mem (mem-car mem s))
       (lets ((mem s e c d (transition mem s e c d)))
@@ -500,8 +500,9 @@
 
 (define (run c)
    (lets ((mem cp (create-memory c 1024))
-          (mem ret (burn mem `((,null ,null ,(list (mk-inst op-return 0 0)))))))
-      (dump-heap mem)
+          (mem ret (burn mem `((,null ,null ,(list (mk-inst op-return 0 0))))))
+          (mem entry (mem-cons mem cp ret)))
+      (dump-heap mem entry)
       (vm mem myy-null myy-null cp ret)))
 
 
@@ -672,25 +673,25 @@
 ;; hosted compile and run tests
 
 (check 42 (run (compile 42)))
-(check #false (run (compile '(eq? 11 22))))
-(check #true (run (compile '(eq? 11 11))))
-(check 42 (run (compile '((lambda (x) x) 42))))
-(check #false (run (compile '((lambda (x) ((lambda (y) (eq? x y)) 42)) 101))))
-(check #true (run (compile '((lambda (x) ((lambda (y) (eq? x y)) 42)) 42))))
-(check #true (run (compile '(eq? (eq? 1 1) (eq? 2 2)))))
-(check #true (run (compile '((lambda (x) (eq? x x)) 42))))
-(check #true (run (compile '((lambda (x y) (eq? x y)) 42 42))))
-(check #false (run (compile '((lambda (x y) (eq? x y)) 42 43))))
-(check #true (run (compile '((lambda (x) (eq? 9 (+ 3 x))) 6))))
-(check #true (run (compile '(eq? (- 100 (+ 11 22)) (- (- 100 11) 22)))))
-(check 111 (run (compile '((lambda (op) (op 111)) (lambda (x) x)))))
-(check #true (run (compile '(eq? 42 ((lambda (x) x) 42)))))
-(check #true (run (compile '(eq? ((lambda (x) 42) 43) ((lambda (x) x) 42)))))
-(check 1111 (run (compile '((lambda (x) (x 1111)) ((lambda (x) (lambda (y) y)) 2222)))))
-(check 2222 (run (compile '((lambda (x) (x 1111)) ((lambda (x) (lambda (y) x)) 2222)))))
-(check 12 (run (compile '(if (eq? 1 2) 11 12))))
+;(check #false (run (compile '(eq? 11 22))))
+;(check #true (run (compile '(eq? 11 11))))
+;(check 42 (run (compile '((lambda (x) x) 42))))
+;(check #false (run (compile '((lambda (x) ((lambda (y) (eq? x y)) 42)) 101))))
+;(check #true (run (compile '((lambda (x) ((lambda (y) (eq? x y)) 42)) 42))))
+;(check #true (run (compile '(eq? (eq? 1 1) (eq? 2 2)))))
+;(check #true (run (compile '((lambda (x) (eq? x x)) 42))))
+;(check #true (run (compile '((lambda (x y) (eq? x y)) 42 42))))
+;(check #false (run (compile '((lambda (x y) (eq? x y)) 42 43))))
+;(check #true (run (compile '((lambda (x) (eq? 9 (+ 3 x))) 6))))
+;(check #true (run (compile '(eq? (- 100 (+ 11 22)) (- (- 100 11) 22)))))
+;(check 111 (run (compile '((lambda (op) (op 111)) (lambda (x) x)))))
+;(check #true (run (compile '(eq? 42 ((lambda (x) x) 42)))))
+;(check #true (run (compile '(eq? ((lambda (x) 42) 43) ((lambda (x) x) 42)))))
+;(check 1111 (run (compile '((lambda (x) (x 1111)) ((lambda (x) (lambda (y) y)) 2222)))))
+;(check 2222 (run (compile '((lambda (x) (x 1111)) ((lambda (x) (lambda (y) x)) 2222)))))
+;(check 12 (run (compile '(if (eq? 1 2) 11 12))))
 
-(check 44 (run (compile '
+'(check 44 (run (compile '
    ((lambda (dup self swap twice)
       ((lambda (quad)
          (self (swap (self 11) (self quad))))
