@@ -353,7 +353,7 @@
       
 (define (execute mem s e c d instruction)
    (lets ((op a b (decode-inst (fixnum-val instruction))))
-      (print "  - exec " op ": " a ", " b)
+      ;(print "  - exec " op ": " a ", " b)
       (case op
          (op-apply
             (lets
@@ -424,14 +424,22 @@
          (else
             (error "Myy unknown instruction: " op)))))
 
-      
+(define (mem-length mem ptr)
+   (let loop ((ptr ptr) (n 0))
+      (if (eq? ptr myy-null)
+         n
+         (loop (mem-cdr mem ptr) (+ n 1)))))
+   
 (define (do-gc mem s e c d)
+   (display "GC: ")
    (lets
       ((mem s (mark mem s))
        (mem e (mark mem e))
        (mem c (mark mem c))
-       (mem d (mark mem d)))
-      (sweep mem)))
+       (mem d (mark mem d))
+       (mem (sweep mem)))
+      (print "end gc, free list length " (mem-length mem (getf mem 'free)))
+      mem))
        
 (define (transition mem s e c d)
    (let ((mem (do-gc mem s e c d)))
@@ -710,7 +718,15 @@
     (lambda (a b) (b a))
     (lambda (op x) (op (op x)))))))
 
-
+(check 1 (run (compile 
+   '((lambda (pred)
+         ((lambda (walk)
+            (walk walk 90))
+            (lambda (self x)
+               (if (eq? x 1)
+                  x
+                  (self self (pred x))))))
+       (lambda (x) (- x 1))))))
 
 
 
