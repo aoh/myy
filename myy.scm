@@ -95,6 +95,8 @@
 (define myy-null (mk-immediate 0 0))
 (define myy-true (mk-immediate 1 1))
 (define myy-false (mk-immediate 1 0))
+
+(define (myy-null? desc) (eq? desc myy-null))
  
 (define (marked? word) (eq? 1 (band word 1)))
 
@@ -121,8 +123,8 @@
 
 ;; remove pairness bit if present
 (define (maybe-untag ptr) (if (eq? 0 (band ptr #b100)) ptr (bxor ptr #b100)))
-(define (mem-car mem ptr) (read mem (maybe-untag ptr)))
-(define (mem-cdr mem ptr) (read mem (+ (maybe-untag ptr) 4)))
+(define (mem-car mem ptr) (if (immediate? ptr) (error "car on immediate " ptr) (read mem (maybe-untag ptr))))
+(define (mem-cdr mem ptr) (if (immediate? ptr) (error "cdr on immediate " ptr) (read mem (+ (maybe-untag ptr) 4))))
 (define (mem-car! mem ptr val) (write mem (maybe-untag ptr) val))
 (define (mem-cdr! mem ptr val) (write mem (+ (maybe-untag ptr) 4) val))
    
@@ -246,7 +248,51 @@
 
 
 ;;;
-;;; SECD VM, direct, transitions
+;;; Data transfer to virtual memory, simple acyclic version for compiler output
+;;;
+
+(define* (burn mem obj)
+   (cond
+      ((number? obj)
+         (values mem (mk-fixnum obj)))
+      ((pair? obj)
+         (lets ((mem hd (burn mem (car obj)))
+                (mem tl (burn mem (cdr obj))))
+            (mem-cons mem hd tl)))
+      ((null? obj)
+         (values mem myy-null))
+      (else
+         (error "burn: how should i encode " obj))))
+
+(define (create-memory obj mem-size)
+   ;; mem obj -> mem descriptor
+   (burn 
+      (make-memory mem-size)
+      obj))
+
+(define (read-memory-object mem ptr)
+   (cond
+      ((immediate? ptr)
+         (cond
+            ((eq? ptr myy-null)
+               '())
+            ((fixnum? ptr)
+               (fixnum-val ptr))
+            (else
+               (str "[IMMEDIATE " ptr "]"))))
+      ((mem-pair? ptr)
+         (cons (read-memory-object mem (mem-car mem ptr))
+               (read-memory-object mem (mem-cdr mem ptr))))
+      (else 
+         (str "[ALLOC " ptr "]"))))
+
+(check 42 (lets ((mem ptr (create-memory 42 10))) (read-memory-object mem ptr)))     
+(check (cons 1 2) (lets ((mem ptr (create-memory (cons 1 2) 10))) (read-memory-object mem ptr)))
+(let ((val '(1 2 3 (4 . 5) . 6)))
+   (check val (lets ((mem ptr (create-memory val 10))) (read-memory-object mem ptr))))
+
+;;;
+;;; SECD VM
 ;;;
 
 (define op-apply           1)
@@ -280,46 +326,76 @@
       (else
          (error "Cannot apply " rator))))
 
+(define (mem-list-ref mem lptr n)
+   (cond
+      ((eq? lptr myy-null)
+         (error "myy list ref out of list: " n))
+      ((eq? n 0)
+         (mem-car mem lptr))
+      (else
+         (mem-list-ref mem (mem-cdr mem lptr) (- n 1)))))
     
-(define (execute s e c d instruction)
-   (lets ((op a b (decode-inst instruction)))
-      (print "EXEC " op ": " a ", " b)
+(define (execute mem s e c d instruction)
+   (print "SECD VM")
+   (print "  - s " (read-memory-object mem s))
+   (print "  - e " (read-memory-object mem e))
+   (print "  - c " (read-memory-object mem c))
+   (print "  - d " (read-memory-object mem d))
+   (lets ((op a b (decode-inst (fixnum-val instruction))))
+      (print "  - exec " op ": " a ", " b)
       (case op
          (op-apply
             (lets
                ((rator (list-ref s a))
                 (rands (list-ref s b)))
+               (error "unhandled " op)
                (vm-apply s e c d rator rands)))
          (op-close 
+            (error "unhandled " op)
             (values
                (cons (mk-closure (car c) s e) s) e (cdr c) d))
          (op-return 
-            (let ((rval (list-ref s a)))
-               (apply (lambda (s e c) (values (cons rval s) e c (cdr d))) (car d))))
+            (lets ((rval (mem-list-ref mem s a))
+                   (st (mem-car mem d))
+                   (d (mem-cdr mem d))
+                   (s (mem-car mem st)) (st (mem-cdr mem st))
+                   (e (mem-car mem st)) (st (mem-cdr mem st))
+                   (c (mem-car mem st))
+                   (mem s (mem-cons mem rval s)))
+               (print "returning")
+               (values mem s e c d)))
          (op-load-immediate
             ;; load immediate directly after instruction opcode
-            (values (cons (>> instruction 6) s) e c d))
+            (lets ((mem s (mem-cons mem (>> instruction 6) s)))
+               (print "Loading immediate " (>> instruction 6))
+               (values mem s e c d)))
          (op-load-pos
+            (error "unhandled " op)
             (values (cons (list-ref s a) s) e c d))
          (op-load-value
-            ;; load subsequent (likely allocated) value
-            (values (cons (car c) s) e (cdr c) d))
+            (lets ((mem s (mem-cons mem (mem-car mem c) s)))
+               (values mem s e (mem-cdr mem c) d)))
          (op-equal
+            (error "unhandled " op)
             (values (cons (eq? (list-ref s a) (list-ref s b)) s) e c d))
          (op-add
+            (error "unhandled " op)
             (lets ((fa (list-ref s a))
                    (fb (list-ref s b)))
                (values (cons (+ fa fb) s) e c d)))
          (op-sub
+            (error "unhandled " op)
             (lets ((fa (list-ref s a))
                    (fb (list-ref s b)))
                (values (cons (- fa fb) s) e c d)))
          (op-if
-            (print "if on stack " s)
+            (error "unhandled " op)
             (values s e (if (list-ref s a) (car c) (cdr c)) d))
          (op-load-env
+            (error "unhandled " op)
             (values (cons (list-ref (list-ref e a) b) s) e c d))
          (op-call 
+            (error "unhandled " op)
             (lets
                ((rator (list-ref s a))
                 (arity b)
@@ -334,14 +410,17 @@
          (else
             (error "Myy unknown instruction: " op)))))
 
-(define (transition s e c d)
-   (if (null? c)
-      (lets ((state d d))
-         (apply
-            (lambda (s1 e1 c1)
-               (values (cons (car s) s1) e1 c1 d))
-            state))
-      (execute s e (cdr c) d (car c))))
+(define (transition mem s e c d)
+   (if (myy-null? c)
+      (lets ((state (mem-car mem d))
+             (d (mem-cdr mem d))
+             (s1 (mem-car mem state)) (state (mem-cdr mem state))
+             (e1 (mem-car mem state)) (state (mem-cdr mem state))
+             (c1 (mem-car mem state))
+             (rval (mem-car mem s))
+             (mem s1 (mem-cons rval s1)))
+            (values s1 e1 c1 d))
+      (execute mem s e (mem-cdr mem c) d (mem-car mem c))))
 
 ;; VM transition checks
 (define-syntax check-transition
@@ -355,61 +434,19 @@
                (error "The computer says no." (str "SECD " start " => \n    " got " instead of\n    " desired)))))))
 
  
-(check-transition 'S 'E (list (bor (<< 42 6) op-load-immediate)) 'D => '(42 . S) 'E null 'D)
-(check-transition 'S 'E (list op-load-value 42) 'D => '(42 . S) 'E () 'D)
-(check-transition 'S 'E (list op-close 'CODE) 'D => '((closure CODE (S . E)) . S) 'E () 'D)
-(check-transition '(s0 s1 s2) 'E (list (mk-inst op-load-pos 2 0)) 'D => '(s2 s0 s1 s2) 'E () 'D)
-(check-transition '((closure CC CE) (A0 A1) . S) 'E (cons (mk-inst op-apply 0 1) 'C) 'D =>
-                   '(A0 A1) 'CE 'CC '((((closure CC CE) (A0 A1) . S) E C) . D)) 
-(check-transition '(a x a b) 'E (list (mk-inst op-equal 0 2)) 'D => '(#true a x a b) 'E null 'D)
-(check-transition '(a x a b) 'E (list (mk-inst op-equal 0 1)) 'D => '(#false a x a b) 'E null 'D)
-(check-transition '(x #false) 'E (ilist (mk-inst op-if 0 0) 'THEN 'ELSE) 'D => '(x #false) 'E 'THEN 'D)
-(check-transition '(x #false) 'E (ilist (mk-inst op-if 1 0) 'THEN 'ELSE) 'D => '(x #false) 'E 'ELSE 'D)
-(check-transition '(x x RESULT) 'XE (list (mk-inst op-return 2 0)) '((S E C) . D)  => '(RESULT . S) 'E 'C 'D)
+;(check-transition 'S 'E (list (bor (<< 42 6) op-load-immediate)) 'D => '(42 . S) 'E null 'D)
+;(check-transition 'S 'E (list op-load-value 42) 'D => '(42 . S) 'E () 'D)
+;(check-transition 'S 'E (list op-close 'CODE) 'D => '((closure CODE (S . E)) . S) 'E () 'D)
+;(check-transition '(s0 s1 s2) 'E (list (mk-inst op-load-pos 2 0)) 'D => '(s2 s0 s1 s2) 'E () 'D)
+;(check-transition '((closure CC CE) (A0 A1) . S) 'E (cons (mk-inst op-apply 0 1) 'C) 'D =>
+;                   '(A0 A1) 'CE 'CC '((((closure CC CE) (A0 A1) . S) E C) . D)) 
+;(check-transition '(a x a b) 'E (list (mk-inst op-equal 0 2)) 'D => '(#true a x a b) 'E null 'D)
+;(check-transition '(a x a b) 'E (list (mk-inst op-equal 0 1)) 'D => '(#false a x a b) 'E null 'D)
+;(check-transition '(x #false) 'E (ilist (mk-inst op-if 0 0) 'THEN 'ELSE) 'D => '(x #false) 'E 'THEN 'D)
+;(check-transition '(x #false) 'E (ilist (mk-inst op-if 1 0) 'THEN 'ELSE) 'D => '(x #false) 'E 'ELSE 'D)
+;(check-transition '(x x RESULT) 'XE (list (mk-inst op-return 2 0)) '((S E C) . D)  => '(RESULT . S) 'E 'C 'D)
 
 
-;;;
-;;; Data transfer to virtual memory, simple acyclic version for compiler output
-;;;
-
-(define* (create-memory obj mem-size)
-   ;; mem obj -> mem descriptor
-   (define (burn mem obj)
-      (cond
-         ((number? obj)
-            (values mem (mk-fixnum obj)))
-         ((pair? obj)
-            (lets ((mem hd (burn mem (car obj)))
-                   (mem tl (burn mem (cdr obj))))
-               (mem-cons mem hd tl)))
-         ((null? obj)
-            (values mem myy-null))
-         (else
-            (error "burn: how should i encode " obj))))
-   (burn 
-      (make-memory mem-size)
-      obj))
-
-(define* (read-memory-object mem ptr)
-   (cond
-      ((immediate? ptr)
-         (cond
-            ((eq? ptr myy-null)
-               '())
-            ((fixnum? ptr)
-               (fixnum-val ptr))
-            (else
-               (str "[IMMEDIATE " ptr "]"))))
-      ((mem-pair? ptr)
-         (cons (read-memory-object mem (mem-car mem ptr))
-               (read-memory-object mem (mem-cdr mem ptr))))
-      (else 
-         (str "[ALLOC " ptr "]"))))
-
-(check 42 (lets ((mem ptr (create-memory 42 10))) (read-memory-object mem ptr)))     
-(check (cons 1 2) (lets ((mem ptr (create-memory (cons 1 2) 10))) (read-memory-object mem ptr)))
-(let ((val '(1 2 3 (4 . 5) . 6)))
-   (check val (lets ((mem ptr (create-memory val 10))) (read-memory-object mem ptr))))
 
 
 
@@ -417,50 +454,22 @@
 ;;; SECD VM
 ;;;
 
-(define (vm s e c d)
-   (if (null? d)
-      (car s)
-      (lets ((s e c d (transition s e c d)))
-         (vm s e c d))))
+(define (vm mem s e c d)
+   (print "vm " s ", " e ", " c ", " d)
+   (if (myy-null? d)
+      (read-memory-object mem (mem-car mem s))
+      (lets ((mem s e c d (transition mem s e c d)))
+         (vm mem s e c d))))
 
 (define (run c)
-   (vm null null c `((null null ,(list (mk-inst op-return 0 0))))))
+   (lets ((mem cp (create-memory c 1024))
+          (mem ret (burn mem `((,null ,null ,(list (mk-inst op-return 0 0)))))))
+      (vm mem myy-null myy-null cp ret)))
 
 ;; vm run checks
-(check 42
-   (run 
-      (list 
-         (mk-inst op-load-immediate 42 0)
-         (mk-inst op-return 0 0))))
-(check 42
-   (run
-      (list
-         (mk-inst op-load-immediate 11 0)
-         (mk-inst op-load-immediate 11 0)
-         (mk-inst op-equal 0 1)
-         (mk-inst op-if 0 0) 
-         (list 
-            (mk-inst op-load-immediate 42 0)
-            (mk-inst op-return 0 0))
-         (mk-inst op-return 1 0))))
- (check 22
-   (run
-      (list
-         (mk-inst op-load-immediate 11 0)
-         (mk-inst op-load-immediate 22 0)
-         (mk-inst op-equal 0 1)
-         (mk-inst op-if 0 0) 
-         (list 
-            (mk-inst op-load-immediate 42 0)
-            (mk-inst op-return 0 0))
-         (mk-inst op-return 1 0))))
-
-
-;;;
-;;; SECD Compiler
-;;;
-
-;; s = (exp-evaluated-if-known . names-for-it)
+;(check 42 (run (list (mk-inst op-load-immediate 42 0) (mk-inst op-return 0 0))))
+;(check 42 (run (list (mk-inst op-load-immediate 11 0) (mk-inst op-load-immediate 11 0) (mk-inst op-equal 0 1) (mk-inst op-if 0 0) (list (mk-inst op-load-immediate 42 0) (mk-inst op-return 0 0)) (mk-inst op-return 1 0))))
+;(check 22 (run (list (mk-inst op-load-immediate 11 0) (mk-inst op-load-immediate 22 0) (mk-inst op-equal 0 1) (mk-inst op-if 0 0) (list (mk-inst op-load-immediate 42 0) (mk-inst op-return 0 0)) (mk-inst op-return 1 0)))) ;;; ;;; SECD Compiler ;;; ;; s = (exp-evaluated-if-known . names-for-it) 
 
 (define (stack-find s exp)
    ;(for-each (lambda (node) (print "  - '" (car node) "' is known as " (cdr node))) s)
@@ -548,10 +557,14 @@
 (define (compiler exp s e)
    (print "================= COMPILER " exp)
    (cond
+      ;((number? exp)
+      ;   (values
+      ;      (cons (list exp) s)
+      ;      (list (mk-inst-unary op-load-immediate (mk-fixnum exp)))))
       ((number? exp)
-         (values
+         (values 
             (cons (list exp) s)
-            (list (mk-inst-unary op-load-immediate exp))))
+            (list op-load-value exp)))
       ((stack-find s exp) =>
          (lambda (pos)
             (values
