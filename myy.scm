@@ -86,7 +86,8 @@
 (define (allocated? n) (eq? 0 (band n #b10)))
 (define (immediate? n) (not (allocated? n)))
 (define (fixnum? n) (eq? #b110 (band n #b110)))
-(define (mem-pair? n) (eq? #b100 (band n #b110)))
+(define (mem-cons? n) (eq? #b100 (band n #b110)))
+(define (mem-pair? n) (eq? #b000 (band n #b110)))
 (define (mk-fixnum n) (bor (<< n 3) #b110))
 (define (fixnum-val n) (>> n 3))
 (define (mk-immediate type payload)
@@ -266,6 +267,10 @@
          (lets ((mem hd (burn mem (car obj)))
                 (mem tl (burn mem (cdr obj))))
             (mem-cons mem hd tl)))
+      ((tuple? obj)
+         (lets ((mem hd (burn mem (ref obj 1)))
+                (mem tl (burn mem (ref obj 2))))
+            (mem-pair mem hd tl)))
       ((null? obj)
          (values mem myy-null))
       (else
@@ -288,9 +293,12 @@
                (fixnum-val ptr))
             (else
                (str "[IMMEDIATE " ptr "]"))))
-      ((mem-pair? ptr)
+      ((mem-cons? ptr)
          (cons (read-memory-object mem (mem-car mem ptr))
                (read-memory-object mem (mem-cdr mem ptr))))
+      ((mem-pair? ptr)
+         (tuple (read-memory-object mem (mem-car mem ptr))
+                (read-memory-object mem (mem-cdr mem ptr))))
       (else 
          (str "[ALLOC " ptr "]"))))
 
@@ -319,6 +327,7 @@
 (define op-add            14)
 (define op-sub            15)
 (define op-set            16)
+(define op-pig            17)
 
 (define (mk-closure mem code stack env)
    (lets 
@@ -417,14 +426,18 @@
          (op-car
             (lets
                ((a (mem-list-ref mem s a)))
-               (if (mem-pair? a)
+               (if (mem-cons? a)
                   (lets ((mem s (mem-cons mem (mem-car mem a) s)))
                      (values mem s e c d))
                   (error "vm car on non-pair " a))))
+         (op-pig
+            (lets ((a (mem-list-ref mem s a))
+                   (mem s (mem-cons mem (mk-fixnum (band a 7)) s)))
+               (values mem s e c d)))
          (op-cdr
             (lets
                ((a (mem-list-ref mem s a)))
-               (if (mem-pair? a)
+               (if (mem-cons? a)
                   (lets ((mem s (mem-cons mem (mem-cdr mem a) s)))
                      (values mem s e c d))
                   (error "vm cdr on non-pair " a))))
@@ -554,6 +567,7 @@
       ((eq? exp 'car) op-car)
       ((eq? exp 'cdr) op-cdr)
       ((eq? exp '-) op-sub)
+      ((eq? exp 'pig) op-pig)
       (else #false)))
 
 (define (prim? exp)
@@ -1043,11 +1057,11 @@ int main(int nargs, char **args) {
          (sexp-case exp
             ((define ? ?) (name value)
                (let ((res (run (compile value env))))
-                  (print ";; " name " → " value)
+                  (print ";; " name " → " res)
                   (loop es 
                      (cons
                         (cons name (car env))
-                        (cons value (cdr env))))))
+                        (cons res (cdr env))))))
             (quit
                (print "Bye bye!")
                0)
