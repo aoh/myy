@@ -2,6 +2,8 @@
 ;;; Sexp mathing
 ;;;
 
+;; todo: virtual memory burn now needs to handle sharing
+
 (define (match exp pat)
    (define (matcher exp pat tail)
       (cond
@@ -256,7 +258,7 @@
 
 
 ;;;
-;;; Data transfer to virtual memory, simple acyclic version for compiler output
+;;; Data transfer to virtual memory, simple acyclic unsharing version for compiler output
 ;;;
 
 (define (burn mem obj)
@@ -1043,10 +1045,11 @@ int main(int nargs, char **args) {
 ")
 
 (define (heap-array port mem)
+   (print ";; heap has " (/ (getf mem 'free) 4) " words") 
    (display-to port "int heap[] = {")
    (for-each
       (lambda (pos)
-         (print-to port (str (read mem pos) ", ")))
+         (display-to port (str (read mem pos) ", ")))
       (iota 0 4 (getf mem 'free)))
    (display-to port "3};"))
 
