@@ -328,6 +328,7 @@
 (define op-sub            15)
 (define op-set            16)
 (define op-pig            17)
+(define op-set-pig        18)
 
 (define (mk-closure mem code stack env)
    (lets 
@@ -434,6 +435,12 @@
             (lets ((a (mem-list-ref mem s a))
                    (mem s (mem-cons mem (mk-fixnum (band a 7)) s)))
                (values mem s e c d)))
+         (op-set-pig
+            (lets ((a (mem-list-ref mem s a))
+                   (pig (fixnum-val (mem-list-ref mem s b)))
+                   (ap (bor pig (band a #xfffffff8)))
+                   (mem s (mem-cons mem ap s)))
+               (values mem s e c d)))
          (op-cdr
             (lets
                ((a (mem-list-ref mem s a)))
@@ -531,8 +538,7 @@
    ;(print " C = " (read-memory-object mem c))
    ;(print " D = " (read-memory-object mem d))
    (if (myy-null? d)
-      (begin
-         (read-memory-object mem (mem-car mem s)))
+      (read-memory-object mem (mem-car mem s))
       (lets ((mem s e c d (transition mem s e c d)))
          (vm mem s e c d))))
 
@@ -543,7 +549,6 @@
 ;(check 22 (run (list (mk-inst op-load-immediate 11 0) (mk-inst op-load-immediate 22 0) (mk-inst op-equal 0 1) (mk-inst op-if 0 0) (list (mk-inst op-load-immediate 42 0) (mk-inst op-return 0 0)) (mk-inst op-return 1 0)))) ;;; ;;; SECD Compiler ;;; ;; s = (exp-evaluated-if-known . names-for-it) 
 
 (define (stack-find s exp)
-   ;(for-each (lambda (node) (print "  - '" (car node) "' is known as " (cdr node))) s)
    (let loop ((s s) (p 0))
       (cond
          ((null? s) #false)
@@ -568,6 +573,7 @@
       ((eq? exp 'cdr) op-cdr)
       ((eq? exp '-) op-sub)
       ((eq? exp 'pig) op-pig)
+      ((eq? exp 'set-pig) op-set-pig)
       (else #false)))
 
 (define (prim? exp)
