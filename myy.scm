@@ -790,7 +790,7 @@ void *calloc(size_t nmemb, size_t size);
 void exit(int status); ")
 
 (define rt-post "
-#define CELLS 10000
+#define CELLS 100000
 #define allocp(val) (0==(((int)val)&2))
 #define immediatep(val) (2==(((int)val)&2))
 #define imm(type,payload) (2 | (type << 3) | (payload << 8))
@@ -1062,7 +1062,7 @@ int main(int nargs, char **args) {
 
 (define (run c)
    (if c
-      (lets ((mem cp (create-memory c 4096))
+      (lets ((mem cp (create-memory c 25000))
              (mem ret (burn mem `((,null ,null ,null))))
              (mem entry (mem-cons mem cp ret)))
          (dump-heap mem entry)
@@ -1078,7 +1078,8 @@ int main(int nargs, char **args) {
    (sexp-case exp
       ((define ? ?) (name value)
          (let ((res (run (compile value env))))
-            (print ";; " name " → " res)
+            ;(print ";; " name " → " res)
+            (print ";; defined " name)
             (values 'ok
                (cons
                   (cons name (car env))
@@ -1108,7 +1109,11 @@ int main(int nargs, char **args) {
       empty-env 
       '(
          (define pair? (lambda (x) (eq? 4 (pig x))))
+
+         (define succ (lambda (x) (+ x 1)))
          
+         (define pred (lambda (x) (- x 1)))
+                  
          (define number? (lambda (x) (eq? 6 (pig x))))
          
          (define function? (lambda (x) (if (eq? 0 (pig x)) 
@@ -1116,6 +1121,12 @@ int main(int nargs, char **args) {
          
          (define fakt ((lambda (f) (lambda (s) (f f s))) 
              (lambda (f s) (if (eq? s 0) 1 (* s (f f (- s 1)))))))
+         
+         (define reverse ((lambda (r) (lambda (l) (r r l '())))
+             (lambda (r l o) (if (eq? l '()) o (r r (cdr l) (cons (car l) o))))))
+
+         (define map ((lambda (m) (lambda (f l) (m f l m)))
+             (lambda (f l m) (if (eq? l '()) l (cons (f (car l)) (m f (cdr l) m))))))
 
          (define range ((lambda (r) (lambda (f t) (r f t r))) 
               (lambda (f t r) (if (eq? f t) '() (cons f (r (+ f 1) t r)) )))))))
