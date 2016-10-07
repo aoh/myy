@@ -341,18 +341,6 @@
        (mem x (mem-pair mem code x))) ;; non-pair, alloc at car
       (values mem x)))
 
-(define (closure? thing)
-   (and (pair? thing) (eq? 'closure (car thing))))
-
-(define (vm-apply s e c d rator rands)
-   (cond
-      ((closure? rator)
-         (lets ((ccode (cadr rator)) (cenv (caddr rator)))
-            (values 
-               rands cenv ccode (cons (list s e c) d))))
-      (else
-         (error "Cannot apply " rator))))
-
 (define (mem-list-ref mem lptr n)
    (cond
       ((eq? lptr myy-null)
@@ -430,9 +418,7 @@
             (lets
                ((a (mem-list-ref mem s a))
                 (b (mem-list-ref mem s b))
-                (xx (read-memory-object mem d))
                 (mem val (mem-cons mem a b))
-                (yy (read-memory-object mem d))
                 (mem s (mem-cons mem val s)))
                (values mem s e c d)))
          (op-car
@@ -489,14 +475,12 @@
          (loop (mem-cdr mem ptr) (+ n 1)))))
    
 (define (do-gc mem s e c d)
-   ;(display "GC: ")
    (lets
       ((mem s (mark mem s))
        (mem e (mark mem e))
        (mem c (mark mem c))
        (mem d (mark mem d))
        (mem (sweep mem)))
-      ;(print "end gc, free list length " (mem-length mem (getf mem 'free)))
       mem))
        
 (define (transition mem s e c d)
@@ -510,31 +494,6 @@
                 (mem s1 (mem-cons mem rval s1)))
                (values mem s1 e1 c1 d))
          (execute mem s e (mem-cdr mem c) d (mem-car mem c))))
-
-;; VM transition checks
-(define-syntax check-transition
-   (syntax-rules (=>)
-      ((check-transition s e c d => sp ep cp dp)
-         (lets ((sx ex cx dx (transition s e c d))
-                (start (list s e c d))
-                (desired (list sp ep cp dp))
-                (got (list sx ex cx dx)))
-            (if (not (equal? desired got))
-               (error "The computer says no." (str "SECD " start " => \n    " got " instead of\n    " desired)))))))
-
- 
-;(check-transition 'S 'E (list (bor (<< 42 6) op-load-immediate)) 'D => '(42 . S) 'E null 'D)
-;(check-transition 'S 'E (list op-load-value 42) 'D => '(42 . S) 'E () 'D)
-;(check-transition 'S 'E (list op-close 'CODE) 'D => '((closure CODE (S . E)) . S) 'E () 'D)
-;(check-transition '(s0 s1 s2) 'E (list (mk-inst op-load-pos 2 0)) 'D => '(s2 s0 s1 s2) 'E () 'D)
-;(check-transition '((closure CC CE) (A0 A1) . S) 'E (cons (mk-inst op-apply 0 1) 'C) 'D =>
-;                   '(A0 A1) 'CE 'CC '((((closure CC CE) (A0 A1) . S) E C) . D)) 
-;(check-transition '(a x a b) 'E (list (mk-inst op-equal 0 2)) 'D => '(#true a x a b) 'E null 'D)
-;(check-transition '(a x a b) 'E (list (mk-inst op-equal 0 1)) 'D => '(#false a x a b) 'E null 'D)
-;(check-transition '(x #false) 'E (ilist (mk-inst op-if 0 0) 'THEN 'ELSE) 'D => '(x #false) 'E 'THEN 'D)
-;(check-transition '(x #false) 'E (ilist (mk-inst op-if 1 0) 'THEN 'ELSE) 'D => '(x #false) 'E 'ELSE 'D)
-;(check-transition '(x x RESULT) 'XE (list (mk-inst op-return 2 0)) '((S E C) . D)  => '(RESULT . S) 'E 'C 'D)
-
 
 
 ;;;
@@ -552,12 +511,6 @@
          (read-memory-object mem (mem-car mem s))
          (lets ((mem s e c d (transition mem s e c d)))
             (vm mem s e c d)))))
-
-
-;; vm run checks
-;(check 42 (run (list (mk-inst op-load-immediate 42 0) (mk-inst op-return 0 0))))
-;(check 42 (run (list (mk-inst op-load-immediate 11 0) (mk-inst op-load-immediate 11 0) (mk-inst op-equal 0 1) (mk-inst op-if 0 0) (list (mk-inst op-load-immediate 42 0) (mk-inst op-return 0 0)) (mk-inst op-return 1 0))))
-;(check 22 (run (list (mk-inst op-load-immediate 11 0) (mk-inst op-load-immediate 22 0) (mk-inst op-equal 0 1) (mk-inst op-if 0 0) (list (mk-inst op-load-immediate 42 0) (mk-inst op-return 0 0)) (mk-inst op-return 1 0)))) ;;; ;;; SECD Compiler ;;; ;; s = (exp-evaluated-if-known . names-for-it) 
 
 (define (stack-find s exp)
    (let loop ((s s) (p 0))
@@ -734,51 +687,6 @@
       (lets ((s c (compiler exp fail)))
          (append c (list (mk-inst op-return 0 0))))))
 
-
-;; hosted compile and run tests
-
-;(check 42 (run (compile 42)))
-;(check #false (run (compile '(eq? 11 22))))
-;(check #true (run (compile '(eq? 11 11))))
-;(check 42 (run (compile '((lambda (x) x) 42))))
-;(check #false (run (compile '((lambda (x) ((lambda (y) (eq? x y)) 42)) 101))))
-;(check #true (run (compile '((lambda (x) ((lambda (y) (eq? x y)) 42)) 42))))
-;(check #true (run (compile '(eq? (eq? 1 1) (eq? 2 2)))))
-;(check #true (run (compile '((lambda (x) (eq? x x)) 42))))
-;(check #true (run (compile '((lambda (x y) (eq? x y)) 42 42))))
-;(check #false (run (compile '((lambda (x y) (eq? x y)) 42 43))))
-;(check #true (run (compile '((lambda (x) (eq? 9 (+ 3 x))) 6))))
-;(check #true (run (compile '(eq? (- 100 (+ 11 22)) (- (- 100 11) 22)))))
-;(check 111 (run (compile '((lambda (op) (op 111)) (lambda (x) x)))))
-;(check #true (run (compile '(eq? 42 ((lambda (x) x) 42)))))
-;(check #true (run (compile '(eq? ((lambda (x) 42) 43) ((lambda (x) x) 42)))))
-;(check 1111 (run (compile '((lambda (x) (x 1111)) ((lambda (x) (lambda (y) y)) 2222)))))
-;(check 2222 (run (compile '((lambda (x) (x 1111)) ((lambda (x) (lambda (y) x)) 2222)))))
-;(check 12 (run (compile '(if (eq? 1 2) 11 12))))
-
-'(check 44 (run (compile '
-   ((lambda (dup self swap twice)
-      ((lambda (quad)
-         (self (swap (self 11) (self quad))))
-       (lambda (x) (twice dup x))))
-    (lambda (x) (+ x x))
-    (lambda (x) x)
-    (lambda (a b) (b a))
-    (lambda (op x) (op (op x)))))))
-
-'(check 4 (run (compile 
-   '((lambda (pred)
-         ((lambda (walk)
-            ((lambda (work)
-               ((lambda (a b c d)
-                  (+ (+ a b) (+ c d)))
-                 (work) (work) (work) (work)))
-               (lambda () (walk walk 10))))
-            (lambda (self x)
-               (if (eq? x 1)
-                  x
-                  (self self (pred x))))))
-       (lambda (x) (- x 1))))))
 
 
 ;;;
@@ -1122,9 +1030,6 @@ int main(int nargs, char **args) {
          (define function? (lambda (x) (if (eq? 0 (pig x)) 
             (pair? (car (set-pig x 4))) #false)))
          
-         (define fakt ((lambda (f) (lambda (s) (f f s))) 
-             (lambda (f s) (if (eq? s 0) 1 (* s (f f (- s 1)))))))
-         
          (define reverse ((lambda (r) (lambda (l) (r r l '())))
              (lambda (r l o) (if (eq? l '()) o (r r (cdr l) (cons (car l) o))))))
 
@@ -1132,8 +1037,9 @@ int main(int nargs, char **args) {
              (lambda (f l m) (if (eq? l '()) l (cons (f (car l)) (m f (cdr l) m))))))
 
          (define range ((lambda (r) (lambda (f t) (r f t r))) 
-              (lambda (f t r) (if (eq? f t) '() (cons f (r (+ f 1) t r)) )))))))
-
+            (lambda (f t r) (if (eq? f t) '() (cons f (r (+ f 1) t r)) ))))
+        
+        )))
 
 (print "MYY LISP")
 (myy-repl standard-library)
