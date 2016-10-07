@@ -2,10 +2,6 @@
 ;;; Sexp mathing
 ;;;
 
-;; todo: add cons, car, cdr, set-car and set-cdr
-;; todo: add some crude macro support
-;; todo: try out something nontrivial that needs GC in C, and add it there
-
 (define (match exp pat)
    (define (matcher exp pat tail)
       (cond
@@ -25,14 +21,20 @@
    (syntax-rules (else)
       ((sexp-cases var (else . then))
          (begin . then))
-      ((sexp-cases var (pat formals . then) . others)
-         (let ((m (match var (quasiquote pat))))
+      ((sexp-cases var ((pat . tern) formals . then) . others)
+         (let ((m (match var (quasiquote (pat . tern)))))
             (if m
                (apply (lambda formals . then) m)
-               (sexp-cases var . others))))))
+               (sexp-cases var . others))))
+      ((sexp-cases var (sym . then) . others)
+         (if (eq? var (quote sym))
+            (begin . then)
+            (sexp-cases var . others)))))
 
 (define-syntax sexp-case
-   (syntax-rules ()
+   (syntax-rules (else)
+      ((sexp-case (else . args))
+         (begin . args))
       ((sexp-case (op . args) . cases)
          (let ((var (op . args)))
             (sexp-case var . cases)))
@@ -53,6 +55,8 @@
                (error "The computer says no." 
                   (str (quote term) " is " result " instead of " desired ".")))))))
 
+
+(check 42 (* 2 (+ 20 1)))
 
 ;;;
 ;;; Data Encoding
@@ -162,7 +166,7 @@
 (define (mem-pair mem a b)
    (let ((free (getf mem 'free)))
       (if (eq? free myy-null)
-         (error "gc needed")
+         (error "gc needed" free)
          (values
             (-> mem
                (put 'free (mem-cdr mem free))
@@ -353,14 +357,7 @@
       
 (define (execute mem s e c d instruction)
    (lets ((op a b (decode-inst (fixnum-val instruction))))
-      ;(print "  - exec " op ": " a ", " b)
       (case op
-         (op-apply
-            (lets
-               ((rator (list-ref s a))
-                (rands (list-ref s b)))
-               (error "unhandled " op)
-               (vm-apply s e c d rator rands)))
          (op-close 
             (lets ((mem clos (mk-closure mem (mem-car mem c) s e))
                    (mem s (mem-cons mem clos s)))
@@ -373,12 +370,10 @@
                    (e (mem-car mem st)) (st (mem-cdr mem st))
                    (c (mem-car mem st))
                    (mem s (mem-cons mem rval s)))
-               (print "returning")
                (values mem s e c d)))
          (op-load-immediate
             ;; load immediate directly after instruction opcode
             (lets ((mem s (mem-cons mem (>> instruction 6) s)))
-               (print "Loading immediate " (>> instruction 6))
                (values mem s e c d)))
          (op-load-pos
             (lets ((mem s (mem-cons mem (mem-list-ref mem s a) s)))
@@ -410,6 +405,29 @@
             (lets ((val (mem-list-ref mem (mem-list-ref mem e a) b))
                    (mem s (mem-cons mem val s)))
                (values mem s e c d)))
+         (op-cons
+            (lets
+               ((a (mem-list-ref mem s a))
+                (b (mem-list-ref mem s b))
+                (xx (read-memory-object mem d))
+                (mem val (mem-cons mem a b))
+                (yy (read-memory-object mem d))
+                (mem s (mem-cons mem val s)))
+               (values mem s e c d)))
+         (op-car
+            (lets
+               ((a (mem-list-ref mem s a)))
+               (if (mem-pair? a)
+                  (lets ((mem s (mem-cons mem (mem-car mem a) s)))
+                     (values mem s e c d))
+                  (error "vm car on non-pair " a))))
+         (op-cdr
+            (lets
+               ((a (mem-list-ref mem s a)))
+               (if (mem-pair? a)
+                  (lets ((mem s (mem-cons mem (mem-cdr mem a) s)))
+                     (values mem s e c d))
+                  (error "vm cdr on non-pair " a))))
          (op-call 
             (lets
                ((rator (mem-list-ref mem s a))
@@ -421,6 +439,15 @@
                 (mem d (mem-cons mem x d)))
                ;; check closureness and arity later
                (values mem args (mem-cdr mem rator) (mem-car mem rator) d)))
+         (op-apply
+            (lets
+               ((rator (mem-list-ref mem s a))
+                (args (mem-list-ref mem s b))
+                (mem x (mem-cons mem (mem-cdr mem c) myy-null)) ;; dump 1st node
+                (mem x (mem-cons mem e x))
+                (mem x (mem-cons mem s x))
+                (mem d (mem-cons mem x d)))
+               (values mem args (mem-cdr mem rator) (mem-car mem rator) d)))
          (else
             (error "Myy unknown instruction: " op)))))
 
@@ -431,14 +458,14 @@
          (loop (mem-cdr mem ptr) (+ n 1)))))
    
 (define (do-gc mem s e c d)
-   (display "GC: ")
+   ;(display "GC: ")
    (lets
       ((mem s (mark mem s))
        (mem e (mark mem e))
        (mem c (mark mem c))
        (mem d (mark mem d))
        (mem (sweep mem)))
-      (print "end gc, free list length " (mem-length mem (getf mem 'free)))
+      ;(print "end gc, free list length " (mem-length mem (getf mem 'free)))
       mem))
        
 (define (transition mem s e c d)
@@ -479,48 +506,22 @@
 ;(check-transition '(x x RESULT) 'XE (list (mk-inst op-return 2 0)) '((S E C) . D)  => '(RESULT . S) 'E 'C 'D)
 
 
-;;;
-;;; C generation
-;;;
-
-(define (heap-array mem)
-   (let ((start "int heap[] = {")
-         (end "3};")) ;; use invalid descriptor 3 as heap end marker
-      (str start
-         (let loop ((pos (- (getf mem 'free) 4)) (out end))
-            (if (eq? pos -4)
-               out
-               (loop (- pos 4) 
-                  (str (read mem pos)
-                     (str ", " out))))))))
-      
-(define* (dump-heap mem entry-pair)
-   (print "Dumping " (read-memory-object mem entry-pair))
-   (lets
-       ((arr (heap-array mem))
-        (port (open-output-file "out.c")))
-      (print-to port arr)
-      ;(print-to port "entry = " entry-pair ";\n")
-      (close-port port)))
-
 
 ;;;
-;;; SECD VM
+;;; SECD REPL
 ;;;
 
 (define (vm mem s e c d)
-   ;(print "vm " s ", " e ", " c ", " d)
+   ;(print "---------------------------")
+   ;(print " S = " (read-memory-object mem s))
+   ;(print " E = " (read-memory-object mem e))
+   ;(print " C = " (read-memory-object mem c))
+   ;(print " D = " (read-memory-object mem d))
    (if (myy-null? d)
-      (read-memory-object mem (mem-car mem s))
+      (begin
+         (read-memory-object mem (mem-car mem s)))
       (lets ((mem s e c d (transition mem s e c d)))
          (vm mem s e c d))))
-
-(define (run c)
-   (lets ((mem cp (create-memory c 1024))
-          (mem ret (burn mem `((,null ,null ,(list (mk-inst op-return 0 0))))))
-          (mem entry (mem-cons mem cp ret)))
-      (dump-heap mem entry)
-      (vm mem myy-null myy-null cp ret)))
 
 
 ;; vm run checks
@@ -544,18 +545,21 @@
          (first-unavailable s (cdr lst)))
       (else (car lst))))
 
-(define (prim? exp)
-   (has? '(eq? + - * =) exp))
-
 (define (primitive->inst exp)
    (cond
       ((eq? exp 'eq?) op-equal)
       ((eq? exp '+) op-add)
+      ((eq? exp 'apply) op-apply)
+      ((eq? exp 'cons) op-cons)
+      ((eq? exp 'car) op-car)
+      ((eq? exp 'cdr) op-cdr)
       ((eq? exp '-) op-sub)
-      (else
-         (error "primitive->inst: what is " exp))))
+      (else #false)))
 
-(define* (primitive-call rator rands s)
+(define (prim? exp)
+   (primitive->inst exp))
+
+(define (primitive-call rator rands s)
    (let ((rands (map (lambda (x) (stack-find s x)) rands)))
       (cond
          ((null? rands)
@@ -610,81 +614,93 @@
          (else 
             (loop (cdr e) (+ depth 1))))))
 
-;; compiler exp S E -> C 
-(define (compiler exp s e)
-   (print "================= COMPILER " exp)
-   (cond
-      ;((number? exp)
-      ;   (values
-      ;      (cons (list exp) s)
-      ;      (list (mk-inst-unary op-load-immediate (mk-fixnum exp)))))
-      ((number? exp)
-         (values 
-            (cons (list exp) s)
-            (list op-load-value exp)))
-      ((stack-find s exp) =>
-         (lambda (pos)
-            (values
-               (cons (list exp) s)
-               (list (mk-inst-unary op-load-pos pos)))))
-      ((and (symbol? exp) (env-find e exp)) =>
-         (lambda (place)
-            (values
-               (cons (list exp) s)
-               (list (mk-inst op-load-env (car place) (cdr place))))))
-      ((symbol? exp)
-         (error "myy unbound: " exp))
-      ((lambda? exp)
-         (lets
-            ((formals (cadr exp))
-             (body (caddr exp))
-             (sp code (compiler body (map (lambda (x) (list nothing x)) formals) (cons s e))))
-            (values
-               (cons (list exp) s)
-               (list op-close code))))
-      ((list? exp)
-         (let ((comp (first-unavailable s (if (or (prim? (car exp)) (lambda? (car exp))) (cdr exp) exp))))
-            ;(print " - first unavailable is " comp)
-            (cond
-               ((if? exp)
-                  (lets
-                     ((s code (compiler (cadr exp)  s e))
-                      (sp then (compiler (caddr exp) s e))
-                      (sp else (compiler (cadddr exp) s e)))
-                     (values sp
-                        (append code
-                           (ilist 
-                              (mk-inst op-if (stack-find s (cadr exp)) 0)
-                              then else)))))
-               (comp
-                  (lets
-                     ((s code (compiler comp s e))
-                      (s rest (compiler exp s e)))
-                     (values s (append code rest))))
-               ((prim? (car exp))
-                  (values
-                     (cons (list exp) s)
-                     (list (primitive-call (car exp) (cdr exp) s))))
-               ((lambda? (car exp))
-                  (lets 
-                     ((s code 
-                        (compiler (caddr (car exp))
-                           (name-values s (cdr exp) (cadr (car exp))) e)))
-                     (values 
-                        (cons (append (car s) (list exp)) (cdr s))
-                        code)))
-               (else
-                  (values 
-                     (cons (list exp) s)
-                     (list 
-                        (mk-inst op-call (stack-find s (car exp)) (length (cdr exp)))
-                        (map (lambda (x) (stack-find s x)) (cdr exp))))))))
-      (else
-         (error "compiler: what is " exp))))
+(define (quote? x) 
+   (and (pair? x) (eq? (car x) 'quote)))
 
-(define (compile exp)
-   (lets ((s c (compiler exp null null)))
-      (append c (list (mk-inst op-return 0 0)))))
+;; compiler exp S E -> C 
+(define (compiler exp fail)
+   (define (comp exp s e)
+      (cond
+         ((number? exp)
+            (values 
+               (cons (list exp) s)
+               (list op-load-value exp)))
+         ((quote? exp)
+            (values (cons (list exp) s) (list op-load-value (cadr exp))))
+         ((stack-find s exp) =>
+            (lambda (pos)
+               (values
+                  (cons (list exp) s)
+                  (list (mk-inst-unary op-load-pos pos)))))
+         ((and (symbol? exp) (env-find e exp)) =>
+            (lambda (place)
+               (values
+                  (cons (list exp) s)
+                  (list (mk-inst op-load-env (car place) (cdr place))))))
+         ((symbol? exp)
+            (fail "myy unbound: " exp))
+         ((lambda? exp)
+            (lets
+               ((formals (cadr exp))
+                (body (caddr exp))
+                (sp code (comp body (map (lambda (x) (list nothing x)) formals) (cons s e))))
+               (values
+                  (cons (list exp) s)
+                  (list op-close code))))
+         ((list? exp)
+            (let ((com (first-unavailable s (if (or (prim? (car exp)) (lambda? (car exp))) (cdr exp) exp))))
+               (cond
+                  ((if? exp)
+                     (lets
+                        ((s code (comp (cadr exp)  s e))
+                         (sp then (comp (caddr exp) s e))
+                         (sp else (comp (cadddr exp) s e)))
+                        (values sp
+                           (append code
+                              (ilist 
+                                 (mk-inst op-if (stack-find s (cadr exp)) 0)
+                                 then else)))))
+                  (com
+                     (lets
+                        ((s code (comp com s e))
+                         (s rest (comp exp s e)))
+                        (values s (append code rest))))
+                  ((eq? (car exp) 'apply)
+                     (values s
+                        (list 
+                           (mk-inst op-apply (stack-find s (cadr exp))
+                                             (stack-find s (caddr exp))))))
+                  ((prim? (car exp))
+                     (values
+                        (cons (list exp) s)
+                        (list (primitive-call (car exp) (cdr exp) s))))
+                  ((lambda? (car exp))
+                     (lets 
+                        ((s code 
+                           (comp (caddr (car exp))
+                              (name-values s (cdr exp) (cadr (car exp))) e)))
+                        (values 
+                           (cons (append (car s) (list exp)) (cdr s))
+                           code)))
+                  (else
+                     (values 
+                        (cons (list exp) s)
+                        (list 
+                           (mk-inst op-call (stack-find s (car exp)) (length (cdr exp)))
+                           (map (lambda (x) (stack-find s x)) (cdr exp))))))))
+         (else
+            (fail "compiler: what is " exp))))
+   (comp exp null null))
+
+(define (compile exp env)
+   (lets/cc ret
+      ((fail (lambda args (print (apply str (cons ";; " args))) (ret #false)))
+       (env-names (car env))
+       (env-values (cdr env))
+       (exp (list 'apply (list 'lambda env-names exp) (list 'quote env-values))))
+      ;(print "Compiling " exp)
+      (lets ((s c (compiler exp fail)))
+         (append c (list (mk-inst op-return 0 0))))))
 
 
 ;; hosted compile and run tests
@@ -708,7 +724,7 @@
 ;(check 2222 (run (compile '((lambda (x) (x 1111)) ((lambda (x) (lambda (y) x)) 2222)))))
 ;(check 12 (run (compile '(if (eq? 1 2) 11 12))))
 
-(check 44 (run (compile '
+'(check 44 (run (compile '
    ((lambda (dup self swap twice)
       ((lambda (quad)
          (self (swap (self 11) (self quad))))
@@ -718,14 +734,14 @@
     (lambda (a b) (b a))
     (lambda (op x) (op (op x)))))))
 
-(check 4 (run (compile 
+'(check 4 (run (compile 
    '((lambda (pred)
          ((lambda (walk)
             ((lambda (work)
                ((lambda (a b c d)
                   (+ (+ a b) (+ c d)))
                  (work) (work) (work) (work)))
-               (lambda () (walk walk 900))))
+               (lambda () (walk walk 10))))
             (lambda (self x)
                (if (eq? x 1)
                   x
@@ -733,23 +749,314 @@
        (lambda (x) (- x 1))))))
 
 
+;;;
+;;; C generation
+;;;
 
-;; ------------------------------------------ 8< ------------------------------------------
+(define rt-pre "#include <stdio.h>
+#include <stdlib.h>
 
-;; varying output for $ watch -n 0.1 "ol myy.scm | tail -n 20"
+void *calloc(size_t nmemb, size_t size);
+void exit(int status); ")
 
-(lets 
-   ((t (time-ms))
-    (cs '(#\space #\▐  #\▌ #\█))
-    (rcs (reverse cs))
-    (out
-       (list->string 
-         (ilist #\newline #\space #\space #\░ 
-            (reverse
-               (cons #\░ 
-                  (map (lambda (x) (list-ref cs (band (>> t (<< x 1)) #b11)))
-                       (iota 0 1 25))))))))
-   (print out))
-   
-   
+(define rt-post "
+#define CELLS 10000
+#define allocp(val) (0==(((int)val)&2))
+#define immediatep(val) (2==(((int)val)&2))
+#define imm(type,payload) (2 | (type << 3) | (payload << 8))
+#define fixval(n) (((int) n) >> 3)
+#define fixnum(n) ((((int) n) << 3) | 6)
+#define fixnump(n) ((((int) n) & 7) == 6)
+#define MNULL imm(0, 0)
+#define MTRUE imm(1, 1)
+#define MFALSE imm(1, 0)
+#define aof(inst) ((inst >> 6) & 255)
+#define bof(inst) (inst >> 14)
+#define car(ptr) *((int *) (((int) ptr) & ~4))
+#define cdr(ptr) *((int *) (4 | ((int) ptr)))
+#define cons(a, b) (pair((int) a, (int) b)|4)
+#define setmark(ptr) (ptr | 1)
+#define unmark(ptr) (ptr ^ 1)
+#define markp(ptr) (ptr & 1)
+
+int S, E, C, D, T;
+int *start, *fp, *end;
+void mark(int this) {
+   int foo;
+   int parent = MNULL;
+   process: 
+      if(immediatep(this)) goto backtrack;
+      foo = car(this);
+      if (markp(foo)) goto backtrack;
+      car(this) = setmark(parent);
+      parent = (this|2);
+      this = foo;
+      goto process;
+   backtrack:   
+      if (parent == MNULL)
+         return;
+      if (parent & 2) {
+         parent = parent^2;
+         foo = cdr(parent);
+         cdr(parent) = unmark(car(parent));
+         car(parent) = setmark(this);
+         this = foo;
+         goto process;
+      }
+      foo = cdr(parent);
+      cdr(parent) = this;
+      this = parent;
+      parent = foo;
+      goto backtrack;
+}
+
+int sweep() {
+   int *pos = end - 2;
+   fp = (int *) MNULL;
+   int nfree = 0;
+   while(start < pos) {
+      int val = *pos;
+      if (markp(val)) {
+         *pos = unmark(val);
+      } else {
+         pos[1] = (int) fp;
+         fp = pos;
+         nfree++;
+      }
+      pos -= 2;
+   }
+   return nfree;
+}
+
+void gc(int a, int b) {
+   int n;
+   mark(S); mark(E); mark(C); mark(D); 
+   mark(T); mark(a); mark(b);
+   n = sweep();
+   if (n < 100) {
+      printf(\"Heap is too full\\n\");
+      exit(1);
+   }
+}
+
+int pair(int a, int b) {
+   int *this;
+   if ((int)fp == MNULL)
+      gc(a, b);
+   this = fp;
+   fp = (int *) cdr(fp);
+   this[0] = a;
+   this[1] = b;
+   return (int) this;
+}
+
+int lref(int lst, int pos) {
+   while(pos--)
+      lst = cdr(lst);
+   return car(lst);
+}
+
+int llen(int ptr) {
+   int n = 0;
+   while(ptr != MNULL) {
+      n++;
+      ptr = cdr(ptr);
+   }
+   return n;
+}
+
+void list_args(int old, int ptr) {
+   if (ptr == MNULL) {
+      S = MNULL;
+   } else {
+      list_args(old, cdr(ptr));
+      S = cons(lref(old, fixval(car(ptr))), S);
+   }
+}
+
+int run() {
+   while (C != MNULL) {
+      int inst = fixval(car(C));
+      C = cdr(C);
+      switch(inst&63) {
+         case 11: /* op-load-value */
+            S = cons(car(C), S);
+            C = cdr(C);
+            break;
+         case 12: /* op-equal */
+            S = cons(((lref(S, aof(inst)) == lref(S, bof(inst))) ? MTRUE : MFALSE), S);
+            break;
+         case 13: { /* op-if */
+            C = ((lref(S, aof(inst)) == MFALSE) ? cdr(C) : car(C));
+            break; }
+         case 3: 
+            S = cons(lref(S, aof(inst)), S);
+            break;
+         case 8:
+            T = lref(S, aof(inst));
+            S = cons(car(T), S);
+            break;
+         case 9:
+            T = lref(S, aof(inst));
+            S = cons(cdr(T), S);
+            break;
+         case 7:
+            S = cons(cons(lref(S, aof(inst)), lref(S, bof(inst))), S);
+            break;
+         case 5: 
+            S = cons(lref(lref(E, aof(inst)), bof(inst)), S);
+            break;
+         case 4: { /* op-return */
+            int rval, st;
+            secd_return:
+            rval = car(S);
+            st = car(D);
+            D = cdr(D);
+            S = car(st); st = cdr(st);
+            E = car(st); st = cdr(st);
+            C = car(st);
+            S = cons(rval, S);
+            if ((int) D == MNULL) {
+               return fixval(car(S));
+            }
+            break; }
+         case 2: { /* close */
+            T = cons(S, E);
+            T = pair(car(C), T); 
+            C = cdr(C);
+            S = cons(T, S);
+            break; }
+         case 6: { /* call */
+            T = cons(cdr(C), MNULL);
+            T = cons(E, T);
+            T = cons(S, T);
+            D = cons(T, D);
+            T = lref(S, aof(inst)); /* operator */
+            list_args(S, car(C)); /* construct to S*/
+            E = cdr(T);
+            C = car(T);
+            break; }
+         case 1: /* op-apply */
+            T = cons(cdr(C), MNULL);
+            T = cons(E, T);
+            T = cons(S, T);
+            D = cons(T, D);
+            T = lref(S, aof(inst)); /* operator */
+            S = lref(S, bof(inst)); /* args */
+            E = cdr(T);
+            C = car(T);
+            break;
+         case 14: { /* add */
+            int a = fixval(lref(S, aof(inst)));
+            int b = fixval(lref(S, bof(inst)));
+            S = cons(fixnum(a + b), S);
+            break; }
+         case 15: { /* sub */
+            int a = fixval(lref(S, aof(inst)));
+            int b = fixval(lref(S, bof(inst)));
+            S = cons(fixnum(a - b), S);
+            break; }
+         default:
+            printf(\"vm: what inst is %d\\n\", inst&63);
+            return 127;
+      }
+   }
+   goto secd_return;
+}
+
+void load_heap() {
+   int pos = 0;
+   int *hp = start;
+   int val;
+   while (1) {
+      int val = heap[pos];
+      if (val == 3) { break; }
+      *hp = (immediatep(val) ? val : ((int) start) + val);
+      hp++;
+      pos++;     
+   }
+   hp -= 2;
+   S = MNULL;
+   E = MNULL;
+   C = hp[0];
+   D = hp[1];
+   T = MNULL;
+   fp = hp;
+   while(hp < end) { /* first sweep */
+      cdr(hp) = ((int)hp)+8;
+      hp += 2;
+   }
+   hp -= 2;
+   cdr(hp) = MNULL;
+}
+
+int main(int nargs, char **args) {
+   int rval;
+   start  = (int *) calloc((sizeof (int *)), 2 * CELLS);
+   end = start + 2*CELLS;
+   load_heap();   
+   rval = run();
+   return rval;
+}
+
+")
+
+(define (heap-array mem)
+   (let ((start "int heap[] = {")
+         (end "3};")) ;; use invalid descriptor 3 as heap end marker
+      (str start
+         (let loop ((pos (- (getf mem 'free) 4)) (out end))
+            (if (eq? pos -4)
+               out
+               (loop (- pos 4) 
+                  (str (read mem pos)
+                     (str ", " out))))))))
+
+(define (dump-heap mem entry-pair)
+   ;(print "Dumping " (read-memory-object mem entry-pair))
+   (print ";; writing out.c")
+   (lets
+       ((arr (heap-array mem))
+        (port (open-output-file "out.c")))
+      (print-to port rt-pre)
+      (print-to port arr)
+      (print-to port rt-post)
+      (close-port port)))
+
+(define (run c)
+   (if c
+      (lets ((mem cp (create-memory c 1024))
+             (mem ret (burn mem `((,null ,null ,null))))
+             (mem entry (mem-cons mem cp ret)))
+         (dump-heap mem entry)
+         (print ";; Running SECD with C = " c)
+         (vm mem myy-null myy-null cp ret))))
+
+(import (owl terminal)
+        (owl sexp)
+        (owl parse))
+
+(define (myy-repl env)
+   (let loop ((es (lambda () (fd->exp-stream stdin #f sexp-parser #f #f))) (env env))
+      (display "* ")
+      (lets ((exp es (uncons es 'quit)))
+         (sexp-case exp
+            ((define ? ?) (name value)
+               (let ((res (run (compile value env))))
+                  (print ";; " name " → " value)
+                  (loop es 
+                     (cons
+                        (cons name (car env))
+                        (cons value (cdr env))))))
+            (quit
+               (print "Bye bye!")
+               0)
+            (else
+               (print (run (compile exp env)))
+               (loop es env))))))
+
+(define empty-env (cons null null))
+
+(print "MYY LISP")
+(myy-repl empty-env)
 
