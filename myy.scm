@@ -88,7 +88,7 @@
 (define (fixnum? n) (eq? #b110 (band n #b110)))
 (define (mem-cons? n) (eq? #b100 (band n #b110)))
 (define (mem-pair? n) (eq? #b000 (band n #b110)))
-(define (mk-fixnum n) (bor (<< n 3) #b110))
+(define (mk-fixnum n) (band #x7fffffff (bor (<< n 3) #b110)))
 (define (fixnum-val n) (>> n 3))
 (define (mk-immediate type payload)
    (bor (<< payload 8) (bor (<< type 3) #b010)))
@@ -263,6 +263,8 @@
    (cond
       ((number? obj)
          (values mem (mk-fixnum obj)))
+      ((eq? obj #true) (values mem myy-true))
+      ((eq? obj #false) (values mem myy-false))
       ((pair? obj)
          (lets ((mem hd (burn mem (car obj)))
                 (mem tl (burn mem (cdr obj))))
@@ -329,6 +331,7 @@
 (define op-set            16)
 (define op-pig            17)
 (define op-set-pig        18)
+(define op-mul            19)
 
 (define (mk-closure mem code stack env)
    (lets 
@@ -405,6 +408,12 @@
             (lets ((a (mem-list-ref mem s a))
                    (b (mem-list-ref mem s b))
                    (x (mk-fixnum (- (fixnum-val a) (fixnum-val b))))
+                   (mem s (mem-cons mem x s)))
+               (values mem s e c d)))
+         (op-mul
+            (lets ((a (mem-list-ref mem s a))
+                   (b (mem-list-ref mem s b))
+                   (x (mk-fixnum (* (fixnum-val a) (fixnum-val b))))
                    (mem s (mem-cons mem x s)))
                (values mem s e c d)))
          (op-if
@@ -489,7 +498,6 @@
       mem))
        
 (define (transition mem s e c d)
-   (let ((mem (do-gc mem s e c d)))
       (if (myy-null? c)
          (lets ((state (mem-car mem d))
                 (d (mem-cdr mem d))
@@ -499,7 +507,7 @@
                 (rval (mem-car mem s))
                 (mem s1 (mem-cons mem rval s1)))
                (values mem s1 e1 c1 d))
-         (execute mem s e (mem-cdr mem c) d (mem-car mem c)))))
+         (execute mem s e (mem-cdr mem c) d (mem-car mem c))))
 
 ;; VM transition checks
 (define-syntax check-transition
@@ -537,10 +545,11 @@
    ;(print " E = " (read-memory-object mem e))
    ;(print " C = " (read-memory-object mem c))
    ;(print " D = " (read-memory-object mem d))
-   (if (myy-null? d)
-      (read-memory-object mem (mem-car mem s))
-      (lets ((mem s e c d (transition mem s e c d)))
-         (vm mem s e c d))))
+   (let ((mem (do-gc mem s e c d)))
+      (if (myy-null? d)
+         (read-memory-object mem (mem-car mem s))
+         (lets ((mem s e c d (transition mem s e c d)))
+            (vm mem s e c d)))))
 
 
 ;; vm run checks
@@ -567,6 +576,7 @@
    (cond
       ((eq? exp 'eq?) op-equal)
       ((eq? exp '+) op-add)
+      ((eq? exp '*) op-mul)
       ((eq? exp 'apply) op-apply)
       ((eq? exp 'cons) op-cons)
       ((eq? exp 'car) op-car)
@@ -641,7 +651,7 @@
 (define (compiler exp fail)
    (define (comp exp s e)
       (cond
-         ((number? exp)
+         ((or (number? exp) (has? '(() #true #false) exp))
             (values 
                (cons (list exp) s)
                (list op-load-value exp)))
@@ -976,6 +986,17 @@ int run() {
             int b = fixval(lref(S, bof(inst)));
             S = cons(fixnum(a - b), S);
             break; }
+         case 17: /* pig */
+            S = cons(fixnum(lref(S, aof(inst)) & 7), S);
+            break;
+         case 18: /* set-pig */
+            S = cons(fixnum(lref(S, aof(inst)) & ~7) | (fixval(lref(S, bof(inst))) & 7), S);
+            break;
+         case 19: { /* mul */
+            int a = fixval(lref(S, aof(inst)));
+            int b = fixval(lref(S, bof(inst)));
+            S = cons(fixnum(a * b), S);
+            break; }
          default:
             printf(\"vm: what inst is %d\\n\", inst&63);
             return 127;
@@ -1021,62 +1042,87 @@ int main(int nargs, char **args) {
 
 ")
 
-(define (heap-array mem)
-   (let ((start "int heap[] = {")
-         (end "3};")) ;; use invalid descriptor 3 as heap end marker
-      (str start
-         (let loop ((pos (- (getf mem 'free) 4)) (out end))
-            (if (eq? pos -4)
-               out
-               (loop (- pos 4) 
-                  (str (read mem pos)
-                     (str ", " out))))))))
+(define (heap-array port mem)
+   (display-to port "int heap[] = {")
+   (for-each
+      (lambda (pos)
+         (print-to port (str (read mem pos) ", ")))
+      (iota 0 4 (getf mem 'free)))
+   (display-to port "3};"))
 
 (define (dump-heap mem entry-pair)
    ;(print "Dumping " (read-memory-object mem entry-pair))
    (print ";; writing out.c")
    (lets
-       ((arr (heap-array mem))
-        (port (open-output-file "out.c")))
+       ((port (open-output-file "out.c")))
       (print-to port rt-pre)
-      (print-to port arr)
+      (heap-array port mem)
       (print-to port rt-post)
       (close-port port)))
 
 (define (run c)
    (if c
-      (lets ((mem cp (create-memory c 1024))
+      (lets ((mem cp (create-memory c 4096))
              (mem ret (burn mem `((,null ,null ,null))))
              (mem entry (mem-cons mem cp ret)))
          (dump-heap mem entry)
-         (print ";; Running SECD with C = " c)
+         ;(print ";; Running SECD with C = " c)
+         (print ";; Running virtual SECD")
          (vm mem myy-null myy-null cp ret))))
 
 (import (owl terminal)
         (owl sexp)
         (owl parse))
 
+(define (myy-eval exp env)
+   (sexp-case exp
+      ((define ? ?) (name value)
+         (let ((res (run (compile value env))))
+            (print ";; " name " → " res)
+            (values 'ok
+               (cons
+                  (cons name (car env))
+                  (cons res (cdr env))))))
+      (else
+         (values
+            (run (compile exp env))
+            env))))
+
 (define (myy-repl env)
    (let loop ((es (lambda () (fd->exp-stream stdin #f sexp-parser #f #f))) (env env))
       (display "* ")
       (lets ((exp es (uncons es 'quit)))
-         (sexp-case exp
-            ((define ? ?) (name value)
-               (let ((res (run (compile value env))))
-                  (print ";; " name " → " res)
-                  (loop es 
-                     (cons
-                        (cons name (car env))
-                        (cons res (cdr env))))))
-            (quit
-               (print "Bye bye!")
+         (if (eq? exp 'quit)
+            (begin
+               (print "Bye bye o/~")
                0)
-            (else
-               (print (run (compile exp env)))
+            (lets ((res env (myy-eval exp env)))
+               (print res)
                (loop es env))))))
 
 (define empty-env (cons null null))
 
+(define standard-library   
+   (fold
+      (lambda (env exp) (lets ((res env (myy-eval exp env))) env))
+      empty-env 
+      '(
+         (define pair? (lambda (x) (eq? 4 (pig x))))
+         
+         (define number? (lambda (x) (eq? 6 (pig x))))
+         
+         (define function? (lambda (x) (if (eq? 0 (pig x)) 
+            (pair? (car (set-pig x 4))) #false)))
+         
+         (define fakt ((lambda (f) (lambda (s) (f f s))) 
+             (lambda (f s) (if (eq? s 0) 1 (* s (f f (- s 1)))))))
+
+         (define range ((lambda (r) (lambda (f t) (r f t r))) 
+              (lambda (f t r) (if (eq? f t) '() (cons f (r (+ f 1) t r)) )))))))
+
+
 (print "MYY LISP")
-(myy-repl empty-env)
+(myy-repl standard-library)
+
+
 
