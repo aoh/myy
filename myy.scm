@@ -306,7 +306,11 @@
       ((prim-call-to reg exp) =>
          (λ (inst)
             (list inst)))
+      ((offset lits exp) =>
+         (λ (pos)
+            (list (list 'lde (+ pos 2) (reg-num reg)))))
       (else
+         (print "Could not find " exp " from literals " lits)
          (error "load-to: wat " exp))))
 
 (define (load-args args lits)
@@ -426,7 +430,7 @@
                (if (eq? (car regs) (car exp))
                   (reverse (cons (list 'enter 0 (length (cdr exp))) rinsts))
                   (reverse
-                     (cons (list 'apply (offset regs rator) (length (cdr exp)))
+                     (cons (list 'call (offset regs rator) (length (cdr exp)))
                         rinsts))))
             ((dead-register regs exp needed-regs) =>
                (λ (pos)
@@ -442,6 +446,9 @@
                                  (cons (list 'mov val-pos pos) rinsts))))
                         ((loadable? desired-val)
                            (loop (lset regs pos desired-val) (cons (list 'load desired-val pos) rinsts)))
+                        ((offset lits desired-val) =>
+                           (λ (pos)
+                              (list (list 'lde (+ pos 2) pos))))
                         (else
                            (error "register-dance: wat " desired-val))))))
             ((eq? (car regs) '_)
@@ -515,9 +522,11 @@
          (if (> exp 15)
             (cons exp seen)
             seen))
+      ((null? exp)
+         seen)
       ((list? exp)
          (if (lambda? (car exp))
-            (find-literals 
+            (fold find-literals 
                (find-literals seen (caddr (car exp)))
                (cdr exp))
             (fold find-literals seen 
@@ -542,7 +551,7 @@
                (ll-lambda->bytecode
                    (cadr exp)
                    (caddr exp)
-                   (map ll-value->basil lits))))
+                   lits)))
             (if (null? lits)
                bc
                (ilist 'proc bc
@@ -557,16 +566,14 @@
 (test
    (ll-value->basil
       '(lambda (a b c) 
-         ((lambda (e)
-            ((lambda (f)
-               ((lambda (g)
-                  (if (eq? c d)
-                     (b a g)
-                     (b a e)))
-                 (* e f)))
-              11))
-            33))))
-
+         ((lambda (f)
+            (f a b 1 4095 f))
+            (lambda (a b c d e)
+               (if (eq? c d)
+                  (b a d)
+                  ((lambda (c)
+                     (e a b c d) )
+                     (- d c))))))))
 
 
 ;;;
