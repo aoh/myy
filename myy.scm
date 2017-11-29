@@ -303,7 +303,140 @@
 
 (define primops
    '(+ - eq? cons car cdr if))
- 
+
+(define register-list
+   '(a b c d e f g h i j k l m n o p))
+
+(define (register? x)
+   (get regs x #false))
+
+(define (loadable? val)
+   (or
+      (and (fixnum? val) (>= val 0) (< val 16))
+      (eq? val #true)
+      (eq? val #false)
+      (eq? val null)))
+
+(define (dead-register all-regs exp needed-vals)
+   (let loop ((regs (cdr all-regs)) (exp (cdr exp)) (pos 1))
+      (cond
+         ((null? regs) 
+            #false)
+         ((null? exp)
+            #false)
+         ((eq? (car regs) (car exp))
+            ;; value already correct
+            (loop (cdr regs) (cdr exp) (+ pos 1)))
+         ((register? (car regs))
+            (cond
+               ((not (has? needed-vals (car regs)))
+                  ;; register has a useless value
+                  pos)
+               ((> (length (keep (λ (x) (eq? x (car regs))) all-regs)) 1)
+                  ;; we've got more where this came from, fill it!
+                  pos)
+               (else 
+                  ;; only one occurrence of the value - we mustn't lose this!
+                  (loop (cdr regs) (cdr exp) (+ pos 1)))))
+         (else
+            ;; register has an immediate value, meaning we have put it there 
+            ;; intentionally here, so it's perfect
+            (loop (cdr regs) (cdr exp) (+ pos 1))))))
+
+(define (set lst)
+   (cond
+      ((null? lst) null)
+      ((has? (cdr lst) (car lst))
+         (set (cdr lst)))
+      (else (cons (car lst) (set (cdr lst))))))
+
+(define (xref lst pos)
+   (cond
+      ((null? lst) #false)
+      ((eq? pos 0) (car lst))
+      (else (xref (cdr lst) (- pos 1)))))
+
+(define (offset lst val)
+   (let loop ((lst lst) (pos 0))
+      (cond
+         ((null? lst)
+            (error "offset: not found: " val))
+         ((eq? (car lst) val)
+            pos)
+         (else
+            (loop (cdr lst) (+ pos 1))))))
+
+(define (equal-prefix? a b)
+   (cond
+      ((null? a) #true)
+      ((null? b) #true)
+      ((eq? (car a) (car b))
+         (equal-prefix? (cdr a) (cdr b)))
+      (else
+         #false)))
+      
+(define (register-dance exp lits)
+   (print "Let's do the register dance for " exp)
+   (lets
+      ((rator (car exp))
+       (regs (cons '_ register-list)) ;; add the silent r0, which will hold the operator after call / at enter
+       (needed-regs                     ;; registers whose initial values must be available at call time
+         (set (if (register? rator)
+               (cons rator (keep register? exp))
+               (keep register? exp))))
+       (solvable? 
+          (λ (vals)
+             (null? (diff needed-regs regs)))))
+      (let loop ((regs   regs)
+                 (rinsts null))
+         ;(print (list 'loop regs '-> exp 'insts rinsts))
+         (cond
+            ((not (solvable? regs))
+               (print regs " is not solvable, because it does not have " needed-regs)
+               #false)
+            ((equal-prefix? (cdr regs) (cdr exp))
+               (if (eq? (car regs) (car exp))
+                  (reverse (cons (list 'enter 0 (length (cdr exp))) rinsts))
+                  (reverse
+                     (cons (list 'apply (offset regs rator) (length (cdr exp)))
+                        rinsts))))
+            ((dead-register regs exp needed-regs) =>
+               (λ (pos)
+                  (let ((desired-val (xref exp pos)))
+                     (cond
+                        ((not desired-val)
+                           ;; unused
+                           (loop (lset regs pos #false) rinsts))
+                        ((register? desired-val)
+                           (let ((val-pos (offset regs desired-val)))
+                              (loop
+                                 (lset regs pos desired-val)
+                                 (cons (list 'mov val-pos pos) rinsts))))
+                        ((loadable? desired-val)
+                           (loop (lset regs pos desired-val) (cons (list 'load desired-val pos) rinsts)))
+                        (else
+                           (error "register-dance: wat " desired-val))))))
+            ((eq? (car regs) '_)
+               (cond
+                  ((register? rator)
+                     (loop (lset regs 0 rator) (cons (list 'mov (reg-num rator) 0) rinsts)))
+                  (else
+                     (error "no dead values, rator is " rator))))
+            ;; swaps here
+            (else
+               (error "no dead registers in " regs))))))
+
+(define (dance-test exp)
+   (print "DANCE " exp)
+   (print (register-dance exp null))
+   (print)
+   (print)
+   (print))
+
+;(dance-test '(b a c 1))
+;(dance-test '(a a a a))
+(dance-test '(b a e))
+   
 (define (ll-exp->bytecode exp lits)
    (cond
       ((eq? (car exp) 'if)
@@ -327,14 +460,11 @@
                   (load-to (car formals) (car rands) lits)
                   (ll-exp->bytecode body lits))
                (error "multiple bind in head lambda in ll" formals))))
-      ((load-to 0 (car exp) lits) =>
-         (λ (load-insts)
-            (let ((rest (load-args (cdr exp) lits)))
-               (if rest
-                  (append load-insts (append rest (list (list 'enter (length (cdr exp))))))
-                  (error "failed to load args in " exp)))))
+      ((register-dance exp lits) =>
+         (λ (steps)
+            steps))
       (else
-         (error "ll-exp->bytecode: wat " exp))))
+         (error "ll-exp->bytecode: unable to generate call: " exp))))
                   
 ;; literals are accessable via r0
 (define (ll-lambda->bytecode formals exp lits)
@@ -398,20 +528,13 @@
 
 (test
    (ll-value->basil
-         '(lambda (a b c) 
-            ((lambda (e)
-               (if (eq? c d)
-                  (b a e)
-                  (b a d)))
-              4095))))
+      '(lambda (a b c) 
+         ((lambda (e)
+            (if (eq? c d)
+               (b a e)
+               (b a d)))
+            4095))))
 
-'(λ (a b c)
-   ((λ (e)
-      (e a b 1 4095 e))
-      (λ (a b c d e)
-         (if (eq? c d)
-            (b a 4095)
-            ((λ (d) (e a b c d e)) (- b a))))))
 
 
 ;;;
@@ -425,7 +548,7 @@
 
 
 ;;;
-;;; Environment
+;;; Environment (only for REPL)
 ;;;
 
 ; input: sexp in which bindings are done with lambdas, env
