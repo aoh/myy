@@ -61,7 +61,8 @@
 (define (assemble-bytecode lst)
    (if (null? lst)
       null
-      (lets ((op (car lst)))
+      (lets ((op (car lst))
+             (args (cdr lst)))
          (cond
             ((eq? (car op) 'ret)
                (ilist 5 (cadr op) (assemble-bytecode (cdr lst))))
@@ -243,6 +244,9 @@
          '(a b c d e f g h i j k l m n  o p)
          (iota 1 1 15))))
 
+(define (register? x)
+   (get regs x #false))
+
 (define (reg-num reg)
    (if (symbol? reg)
       (let ((n (get regs reg #f)))
@@ -258,6 +262,30 @@
          ((eq? (car lst) exp) pos)
          (else (loop (+ pos 1) (cdr lst))))))
 
+(define (binary-primop->opcode op)
+   (cond
+      ((eq? op '+) 'add)
+      ((eq? op '-) 'sub)
+      ((eq? op '*) 'mul)
+      ((eq? op '/) 'div)
+      (else #false)))
+
+(define* (prim-call-to target exp)
+   (cond
+      ((not (pair? exp))
+         #false)
+      ((not (all register? (cdr exp)))
+         ;; values must be in registers
+         #false)
+      ((binary-primop->opcode (car exp)) =>
+         (λ (op)
+            (if (and (all register? (cdr exp)) 
+                     (= (length (cdr exp)) 2))
+               (cons op (append (map reg-num (cdr exp)) (list (reg-num target))))
+               (error "prim-call-to: invalid args for " exp))))
+      (else 
+         #false)))
+      
 (define (load-to reg exp lits)
    (cond
       ((symbol? exp)
@@ -269,12 +297,15 @@
       ((fixnum? exp)
          (cond
             ((and (< exp #b10000) (>= exp 0))
-               (list (list 'ldf exp reg)))
+               (list (list 'ldf exp (reg-num reg))))
             ((offset lits exp) =>
                (λ (pos)
                   (list (list 'lde (+ pos 2) (reg-num reg)))))
             (else
                (error "load-to: where is " exp))))
+      ((prim-call-to reg exp) =>
+         (λ (inst)
+            (list inst)))
       (else
          (error "load-to: wat " exp))))
 
@@ -302,13 +333,10 @@
    (list-heading-and-len? 'if 4))
 
 (define primops
-   '(+ - eq? cons car cdr if))
+   '(+ - * / eq? cons car cdr if))
 
 (define register-list
    '(a b c d e f g h i j k l m n o p))
-
-(define (register? x)
-   (get regs x #false))
 
 (define (loadable? val)
    (or
@@ -467,7 +495,7 @@
          (error "ll-exp->bytecode: unable to generate call: " exp))))
                   
 ;; literals are accessable via r0
-(define (ll-lambda->bytecode formals exp lits)
+(define* (ll-lambda->bytecode formals exp lits)
    (if (not (pair? exp))
       (error "ll-lambda->bytecode: wat " exp))
    (ilist 'bytecode
@@ -490,7 +518,7 @@
       ((list? exp)
          (if (lambda? (car exp))
             (find-literals 
-               (find-literals seen (cadr (car exp)))
+               (find-literals seen (caddr (car exp)))
                (cdr exp))
             (fold find-literals seen 
                (maybe-drop-primop exp))))
@@ -530,10 +558,14 @@
    (ll-value->basil
       '(lambda (a b c) 
          ((lambda (e)
-            (if (eq? c d)
-               (b a e)
-               (b a d)))
-            4095))))
+            ((lambda (f)
+               ((lambda (g)
+                  (if (eq? c d)
+                     (b a g)
+                     (b a e)))
+                 (* e f)))
+              11))
+            33))))
 
 
 
