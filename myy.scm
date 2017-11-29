@@ -1,3 +1,16 @@
+;;; 
+;;; System settings 
+;;; 
+
+; 256 when testing, ~8000 on trinket   
+(define memsize 256)
+
+(define last (- memsize 1))
+
+
+;;;
+;;; Data representation
+;;;
 
 ; ptr:    [00pppppp pppppppp]
 ; fixnum: [10ffffff ffffff00] -> 12-bit, good for ADC / DAC
@@ -18,12 +31,16 @@
 (define ifalse (make-immediate 2 #b10))
 (define ihalt  (make-immediate 3 #b10))
 
-; 256 when testing, ~8000 on trinket   
-(define memsize 256)
 
-(define last (- memsize 1))
 
-(define (describe-immediate val)
+;;;
+;;; Bytecode assembly
+;;;
+
+; input: bytecode assembly intermediate language (s-exps)
+; output: assembled code and required objects in vm heap[] array
+
+(define (immediate->descriptor val)
    (cond
       ((and (fixnum? val) (< val 4096) (>= val 0))
          (bor bimm (<< val 2)))
@@ -153,12 +170,17 @@
                            (+ at 1))))))
             (else
                (error "assemble: wat pair " obj))))
-      ((describe-immediate obj) =>
+      ((immediate->descriptor obj) =>
          (λ (val)
             (values mem val)))
       (else
          (error "assemble: wat " obj))))
 
+;;;
+;;; VM heap rendering
+;;;
+
+; output virtual memory as C
 
 (define (output mem)
    (display "uint16_t heap[] = {")
@@ -203,7 +225,13 @@
          (sub ,ra1 ,ra2 ,ra2)
          (call ,ra3 4))))
 
-;; ll-lambda->basil ; bytecode assembly intermediate language
+
+;;;
+;;; Low level lambda code -> BASIL
+;;;
+
+; input: code containing explicit continuations, lambdas and primitives
+; output: BASIL sexp, including required linked objects
 
 ; r0 is silent
 (define argument-regs
@@ -385,5 +413,31 @@
             (b a 4095)
             ((λ (d) (e a b c d e)) (- b a))))))
 
+
+;;;
+;;; CPS conversion
+;;;
+
+; input: macro-expanded code
+; operation: add continuations *and* thread continuation
+; output: ll-lambda
+
+
+
+;;;
+;;; Environment
+;;;
+
+; input: sexp in which bindings are done with lambdas, env
+; output: sexp in which references to global values are replaced by the corresponding values
+
+
+
+;;; 
+;;; Macro expansion
+;;; 
+
+; input: regular lisp, env
+; output: lisp without macros
 
 
