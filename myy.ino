@@ -1,17 +1,12 @@
 
 #define HEAPSIZE 256
-uint16_t heap[] = {34379, 776, 9478, 46603, 22029, 2311, 2356, 8194, 20994, 4, 8194, 29186
-, 4, 33027, 0, 32900, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
- 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
- 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
- 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
- 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
- 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
- 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
- 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
- 0, 0, 0, 0, 0, 0, 0};
-#define ENTRY 13
-#define FP 16
+uint16_t heap[] = {33611, 776, 9734, 4875, 13318, 25858, 21761, 33867, 1288, 13321, 3592, 1091, 21761, 8194, 16898, 4, 33155, 0, 7, 49148, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+#define ENTRY 16
+#define FP 20
 
 /*
  ptr:    [00pppppp pppppppp]
@@ -261,8 +256,8 @@ void vm(uint16_t entry) {
   regs[3] = INULL;  // very little machine info
   apply:
   steps++;
-  Serial.print("apply with nargs="); Serial.println(nargs);
-  delay(1000);
+  //Serial.print("apply with nargs="); Serial.println(nargs);
+  //delay(1000);
   rator = regs[0];
   if (immp(rator)) {
     if (rator == IHALT) {
@@ -282,8 +277,8 @@ void vm(uint16_t entry) {
     ip = (uint8_t *) (heap + rator + 1);
     dispatch:
     steps++;
-    print_regs();
-    Serial.print("exec "); Serial.println(*ip);
+    //print_regs();
+    //Serial.print("exec "); Serial.println(*ip);
     switch(*ip) {
       /*      opname    (highbits lowbits) */
       case 1: // call (reg | nargs)
@@ -293,10 +288,6 @@ void vm(uint16_t entry) {
         goto apply;
       case 2: // mov
         op = ip[1];
-        Serial.print("MOV r");
-        Serial.print(op>>4);
-        Serial.print(" -> r");
-        Serial.println(op&7);
         regs[op&7] = regs[op>>4];
         ip += 2;
         goto dispatch;
@@ -362,9 +353,7 @@ void vm(uint16_t entry) {
         goto dispatch; }
       case 14: { // sub a b reg, only positive fixnums
         op = ip[1];
-        int a = fixval(regs[op>>4]);
-        int b = fixval(regs[op&7]);
-        regs[ip[2]] = fixnum(fixval(regs[op&7]) - fixval(regs[op>>4]));
+        regs[ip[2]] = fixnum(fixval(regs[op>>4]) - fixval(regs[op&7]));
         ip += 3;
         goto dispatch; }
       default:
@@ -390,4 +379,3 @@ void loop() {
   vm(ENTRY);
   win("ok");
 }
-

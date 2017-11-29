@@ -210,29 +210,22 @@
       (print "#define FP " (get mem 'fp 'bug))))
 
 
-'(test
-   `(proc
-      (bytecode
-         (arity 1)
-         (ldf 1 ,ra1)
-         (ldi ,rop 2 ,ra2)
-         (ldi ,rop 3 ,ra3)
-         (call ,ra3 4))
-      4095
-      (bytecode
-         (arity 4)
-         (jeq ,ra1 ,ra2
-            (ret ,ra1))
-         (sub ,ra1 ,ra2 ,ra2)
-         (call ,ra3 4))))
-
 
 ;;;
-;;; Low level lambda code -> BASIL
+;;; LL-lambda → BASIL
 ;;;
+
+; Low Level lambda code has:
+;  - explicit continuations
+;  - explicit thread controller / error handler continuation
+;  - fixed formal variables corresponding directly to runtime registers
+
+; the code is a very small subset of the supported language, terms of which 
+; can still be evaluated as such within the full language
 
 ; input: code containing explicit continuations, lambdas and primitives
 ; output: BASIL sexp, including required linked objects
+
 
 ; r0 is silent
 (define argument-regs
@@ -270,7 +263,7 @@
       ((eq? op '/) 'div)
       (else #false)))
 
-(define* (prim-call-to target exp)
+(define (prim-call-to target exp)
    (cond
       ((not (pair? exp))
          #false)
@@ -345,9 +338,10 @@
 (define (loadable? val)
    (or
       (and (fixnum? val) (>= val 0) (< val 16))
-      (eq? val #true)
-      (eq? val #false)
-      (eq? val null)))
+      ;(eq? val #true)
+      ;(eq? val #false)
+      ;(eq? val null)
+      ))
 
 (define (dead-register all-regs exp needed-vals)
    (let loop ((regs (cdr all-regs)) (exp (cdr exp)) (pos 1))
@@ -445,10 +439,12 @@
                                  (lset regs pos desired-val)
                                  (cons (list 'mov val-pos pos) rinsts))))
                         ((loadable? desired-val)
-                           (loop (lset regs pos desired-val) (cons (list 'load desired-val pos) rinsts)))
+                           (loop (lset regs pos desired-val) (cons (list 'ldf desired-val pos) rinsts)))
                         ((offset lits desired-val) =>
-                           (λ (pos)
-                              (list (list 'lde (+ pos 2) pos))))
+                           (λ (lpos)
+                              (loop 
+                                 (lset regs pos desired-val)
+                                 (cons (list 'lde (+ lpos 2) pos) rinsts))))
                         (else
                            (error "register-dance: wat " desired-val))))))
             ((eq? (car regs) '_)
@@ -461,17 +457,6 @@
             (else
                (error "no dead registers in " regs))))))
 
-(define (dance-test exp)
-   (print "DANCE " exp)
-   (print (register-dance exp null))
-   (print)
-   (print)
-   (print))
-
-;(dance-test '(b a c 1))
-;(dance-test '(a a a a))
-(dance-test '(b a e))
-   
 (define (ll-exp->bytecode exp lits)
    (cond
       ((eq? (car exp) 'if)
@@ -497,6 +482,7 @@
                (error "multiple bind in head lambda in ll" formals))))
       ((register-dance exp lits) =>
          (λ (steps)
+            (print "Danced to " exp " using steps " steps)
             steps))
       (else
          (error "ll-exp->bytecode: unable to generate call: " exp))))
@@ -571,8 +557,8 @@
             (lambda (a b c d e)
                (if (eq? c d)
                   (b a d)
-                  ((lambda (c)
-                     (e a b c d) )
+                  ((lambda (d)
+                     (e a b c d e))
                      (- d c))))))))
 
 
