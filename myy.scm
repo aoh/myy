@@ -703,6 +703,7 @@
 (check '(lambda (a) (lambda (a) a)) 
         (alpha-convert '(lambda (x) (lambda (y) y))))
 
+
 ;;;
 ;;; Literal conversion
 ;;;
@@ -712,7 +713,7 @@
 ; (λ (C a)
 ;    (%close 
 ;      (λ (C k x) (a) (k (%ref C 0)))
-;      a)
+;      a))
 
 ;;;
 ;;; CP conversion
@@ -728,6 +729,17 @@
 ;        (λ (C y) (x) (%ref C 0))
 ;        x))
 
+;;; CLP, closure and literal passing style
+
+
+; (lambda (x) 9000) → (%proc (lambda (L x) (%ref x 0)) 9000)
+; (lambda (x) (lambda (y) y)) → 
+;    (%proc (lambda (L x) (%ref L 0))
+;        (lambda (C y) y))
+; (lambda (x) (lambda (y) x)) → 
+;   (%proc (lambda (C x) (%proc-imm 0 x)) ; <- close literal at offset 0 with x
+;      (lambda (C y) (%ref C 0)))
+   
 ;;;
 ;;; CPS conversion
 ;;;
@@ -762,5 +774,86 @@
 
 ; input: regular lisp, env
 ; output: lisp without macros
+
+
+
+
+
+
+
+
+; sketching operation
+
+'(define (map fn lst)
+   (if (null? lst)
+      lst
+      (cons (fn (car lst))
+            (map fn (cdr lst)))))
+
+'(define map
+   (lambda (fn lst)
+      ((lambda (rec)
+         (rec fn lst rec))
+       (lambda (fn lst rec)
+          (if (null? lst)
+             lst
+             (cons (fn (car lst))
+                   (map fn (cdr lst))))))))
+
+'(define map
+   (lambda (fn lst)
+      ((lambda (rec)
+         (rec fn lst rec))
+       (lambda (fn lst rec)
+          (if (null? lst)
+             lst
+             (cons (fn (car lst))
+                   (map fn (cdr lst))))))))
+ 
+'(define map
+   (lambda (m k fn lst)
+      ((lambda (rec)
+         (rec m k fn lst rec))
+       (lambda (m k fn lst rec)
+          (if (null? lst)
+             (k m lst)
+             (fn m 
+                (lambda (m hd)
+                   (rec m
+                      (lambda (m tl)
+                         (k m (cons hd tl)))
+                      fn (cdr lst) rec))
+                (car lst)))))))
+
+'(define map
+   (lambda (m k fn lst)
+      ((lambda (rec)
+         (rec m k fn lst rec))
+       (lambda (m k fn lst rec)
+          (if (null? lst)
+             (k m lst)
+             (fn m 
+                (lambda (m hd)
+                   (rec m
+                      (lambda (m tl)
+                         (k m (cons hd tl)))
+                      fn (cdr lst) rec))
+                (car lst)))))))
+
+'(define map
+   (%proc
+      (lambda (L m k fn lst)
+         ((lambda (rec)
+            (rec m k fn lst rec))
+           (%ref L 0)))
+      (%proc
+         (lambda (L m k fn lst rec)
+             (if (null? lst)
+                (k m lst)
+                (fn m (%close-ref L 0 k hd) (car lst))))   ; <- need to know the closure info before compiling body
+          (%close (L k hd)
+            (lambda (m tl) (k (%ref L 0) (cons (%ref L 1) tl)))))))
+
+
 
 
