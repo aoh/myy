@@ -7,6 +7,84 @@
 
 (define last (- memsize 1))
 
+;;;
+;;; Todo: VVM for running tests
+;;;
+
+;;; 
+;;; Minimal testing
+;;;
+
+(define-syntax check
+   (syntax-rules ()
+      ((check desired term)
+         (let ((result term))
+            (if (not (equal? result desired))
+               (error "The computer says no." 
+                  (str (quote term) " is " result " instead of " desired ".")))))))
+
+(check 42 (* 2 (+ 20 1)))
+
+
+
+;;;
+;;; Sexp pattern matching
+;;;
+
+(define (match exp pat)
+   (define (matcher exp pat tail)
+      (cond
+         ((not tail) #false)
+         ((eq? pat '?) (cons exp tail))
+         ((function? pat) (if (pat exp) (cons exp tail) #false))
+         ((eq? exp pat) tail)
+         ((pair? pat)
+            (if (pair? exp)
+               (matcher (car exp) (car pat)
+                  (matcher (cdr exp) (cdr pat) tail))
+               #false))
+         (else #false)))
+   (matcher exp pat null))
+
+(check '() (match 'a 'a))
+(check '(a) (match 'a '?))
+(check '() (match '(a b) '(a b)))
+(check #false (match '(a x) '(a b)))
+(check '(a (b c)) (match '(a (b c)) '(? ?)))
+
+(define-syntax sexp-cases
+   (syntax-rules (else ?)
+      ((sexp-cases var (else . then))
+         (begin . then))
+      ((sexp-cases var ((pat . tern) formals . then) . others)
+         (let ((m (match var (quasiquote (pat . tern)))))
+            (if m
+               (apply (lambda formals . then) m)
+               (sexp-cases var . others))))
+      ((sexp-cases var (sym . then) . others)
+         (if (eq? var (quote sym))
+            (begin . then)
+            (sexp-cases var . others)))))
+
+(define-syntax sexp-case
+   (syntax-rules (else)
+      ((sexp-case (else . args))
+         (begin . args))
+      ((sexp-case (op . args) . cases)
+         (let ((var (op . args)))
+            (sexp-case var . cases)))
+      ((sexp-case var . cases)
+         (sexp-cases var . cases))))
+
+(check 'yes (sexp-case 'a (b () 'no) (a () 'yes) (else 'wat)))
+(check 'yes 
+   (sexp-case '(a b) 
+      ((?) (x) 'no)
+      ((? ?) (x y) 'yes)
+      (else 42)))
+   
+
+
 
 ;;;
 ;;; Data representation
@@ -18,10 +96,12 @@
 ; header: [10ssssss sRtttt11] -> 32 types (16 raw, 16 alloc), 64 words max size
 
 (define bimm #x8000)
+(define bmask #b11111111111111)
+
 (define heapsize 256)
 
 (define (make-immediate val type)
-   (bor bimm (bor type (<< val 3))))
+   (bor bimm (bor type (<< val 2))))
 
 (define (make-header s t)
    (bor (bor bimm #b11) (bor (<< t 2) (<< s 7))))
@@ -30,6 +110,19 @@
 (define itrue  (make-immediate 1 #b10))
 (define ifalse (make-immediate 2 #b10))
 (define ihalt  (make-immediate 3 #b10))
+
+(define (allocated? desc) (eq? 0 (band bimm desc)))
+(define (immediate? desc) (not (allocated? desc)))
+(define (fixnum n) 
+   (make-immediate n #b00))
+
+(define (fixval desc)
+   (>> (band desc bmask) 2))
+
+(check #f (allocated? inull))
+(check #t (immediate? (fixnum 42)))
+(check 42 (fixval (fixnum 42)))
+(check #t (immediate? (fixnum 42)))
 
 
 
@@ -177,6 +270,7 @@
       (else
          (error "assemble: wat " obj))))
 
+
 ;;;
 ;;; VM heap rendering
 ;;;
@@ -199,10 +293,10 @@
 
 (define (test exp)
    (print "ASSEMBLE " exp)
-   ;(print "#define INULL  0x" (number->string inull 16))
-   ;(print "#define ITRUE  0x" (number->string itrue 16))
-   ;(print "#define IFALSE 0x" (number->string ifalse 16))
-   ;(print "#define IHALT  0x" (number->string ihalt 16))
+   (print "#define INULL  0x" (number->string inull 16))
+   (print "#define ITRUE  0x" (number->string itrue 16))
+   (print "#define IFALSE 0x" (number->string ifalse 16))
+   (print "#define IHALT  0x" (number->string ihalt 16))
    (print "#define HEAPSIZE " heapsize)
    (lets ((mem entry (assemble empty-mem exp)))
       (output mem)
@@ -331,6 +425,9 @@
 
 (define primops
    '(+ - * / eq? cons car cdr if))
+
+(define (primitive? exp)
+   (has? primops exp))
 
 (define register-list
    '(a b c d e f g h i j k l m n o p))
@@ -547,8 +644,6 @@
       (else 
          (error "ll-value->basil: wat " exp))))
 
-; r0=op, r1=mcp=a, r2=cont=b, r3=c, r4=d
-
 (test
    (ll-value->basil
       '(lambda (a b c) 
@@ -562,23 +657,103 @@
                      (- d c))))))))
 
 
+
+;;;
+;;; α-conversion
+;;;
+
+; input: CPS-converted code, in which arbitrary variables are used
+; output: code in which a fixed set of variables, corresponding directly to registers, are used
+
+(define (alpha-rename exp env)
+   (cond
+      ((symbol? exp)
+         (let ((reg (get env exp #false)))
+            (if reg
+               reg
+               (error "alpha-convert: unbound variable " exp))))
+      ((pair? exp)
+         (cond
+            ((eq? (car exp) 'quote)
+               exp)
+            ((primitive? (car exp))
+               (cons (car exp) (map (λ (exp) (alpha-rename exp env)) (cdr exp))))
+            ((eq? (car exp) 'lambda)
+               ;; fixme: check argument count 
+               (lets 
+                  ((formals (cadr exp))
+                   (body (caddr exp))
+                   (env 
+                      (fold (λ (env var-reg) (put env (car var-reg) (cdr var-reg)))
+                         env
+                         (zip cons formals argument-regs))))
+                 (list 'lambda (take argument-regs (length formals))
+                    (alpha-rename body env))))
+            (else
+               (map (λ (x) (alpha-rename x env)) exp))))
+      (else
+         (error "alpha-rename: wat (usually ok) " exp)
+         exp)))
+      
+         
+(define (alpha-convert exp)
+   (alpha-rename exp #empty))
+
+(check '(lambda (a) a) (alpha-convert '(lambda (x) x)))
+(check '(lambda (a) (lambda (a) a)) 
+        (alpha-convert '(lambda (x) (lambda (y) y))))
+
+;;;
+;;; Literal conversion
+;;;
+
+; convert values which are known but not loadable via code to literals
+
+; (λ (C a)
+;    (%close 
+;      (λ (C k x) (a) (k (%ref C 0)))
+;      a)
+
+;;;
+;;; CP conversion
+;;;
+
+; closure passing style - receive closure- (and later literal-) bindings via first argument
+; note: closure always has something on the first slot (later stages possibly literals)
+
+; (lambda (c x) (c x)) → (_lambda (C c x) () (c x))
+; (lambda (x) (lambda (y) x)) → 
+;    (λ (C x) 
+;     (%close
+;        (λ (C y) (x) (%ref C 0))
+;        x))
+
 ;;;
 ;;; CPS conversion
 ;;;
+
+; (lambda (x) x) → (lambda (c x) (c x))
+; (lambda (x) (x x) → (lambda (c x) (x c x))
 
 ; input: macro-expanded code
 ; operation: add continuations *and* thread continuation
 ; output: ll-lambda
 
 
+;;;
+;;; Explicit Recursion
+;;;
+
+; input: s-exp in which implicit recursion may be present (letrec)
+; output: s-exp in which recursion is handled with lambdas
+
 
 ;;;
-;;; Environment (only for REPL)
+;;; Environment bindings
 ;;;
 
 ; input: sexp in which bindings are done with lambdas, env
 ; output: sexp in which references to global values are replaced by the corresponding values
-
 
 
 ;;; 
