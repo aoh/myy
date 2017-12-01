@@ -401,7 +401,7 @@
    (list-heading-and-len? 'if 4))
 
 (define primops
-   '(+ - * / eq? cons car cdr if))
+   '(+ - * / eq? cons car cdr if %ref %close))
 
 (define (primitive? exp)
    (has? primops exp))
