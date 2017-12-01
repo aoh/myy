@@ -1,0 +1,12 @@
+
+;;
+
+(lambda (a b c) 
+   ((lambda (f)
+      (f a b 1 4095 f))
+      (lambda (a b c d e)
+         (if (eq? c d)
+            (b a d)
+            ((lambda (d)
+               (e a b c d e))
+               (- d c))))))

@@ -1,3 +1,5 @@
+#!/usr/bin/ol --run
+
 ;;; 
 ;;; System settings 
 ;;; 
@@ -6,6 +8,12 @@
 (define memsize 256)
 
 (define last (- memsize 1))
+
+(define (debug . args)
+   (for-each 
+      (λ (x) (display-to stderr x))
+      (append args (list "\n"))))
+
 
 ;;;
 ;;; Todo: VVM for running tests
@@ -270,40 +278,9 @@
       (else
          (error "assemble: wat " obj))))
 
-
-;;;
-;;; VM heap rendering
-;;;
-
-; output virtual memory as C
-
-(define (output mem)
-   (display "uint16_t heap[] = {")
-   (fold
-      (λ (_ pos)
-         (display (get mem pos 0))
-         (if (< pos last)
-            (display ", ")))
-      mem
-      (iota 0 1 memsize))
-   (print "};"))
-
-(define empty-mem
-   (put #empty 'fp 0))
-
-(define (test exp)
-   (print "ASSEMBLE " exp)
-   (print "#define INULL  0x" (number->string inull 16))
-   (print "#define ITRUE  0x" (number->string itrue 16))
-   (print "#define IFALSE 0x" (number->string ifalse 16))
-   (print "#define IHALT  0x" (number->string ihalt 16))
-   (print "#define HEAPSIZE " heapsize)
-   (lets ((mem entry (assemble empty-mem exp)))
-      (output mem)
-      (print "#define ENTRY " entry)
-      (print "#define FP " (get mem 'fp 'bug))))
-
-
+(define (assembler-entry mem obj)
+   (debug "Assembling " obj)
+   (assemble mem obj))
 
 ;;;
 ;;; LL-lambda → BASIL
@@ -499,7 +476,6 @@
          #false)))
       
 (define (register-dance exp lits)
-   (print "Let's do the register dance for " exp)
    (lets
       ((rator (car exp))
        (regs (cons '_ register-list)) ;; add the silent r0, which will hold the operator after call / at enter
@@ -579,13 +555,12 @@
                (error "multiple bind in head lambda in ll" formals))))
       ((register-dance exp lits) =>
          (λ (steps)
-            (print "Danced to " exp " using steps " steps)
             steps))
       (else
          (error "ll-exp->bytecode: unable to generate call: " exp))))
                   
 ;; literals are accessable via r0
-(define* (ll-lambda->bytecode formals exp lits)
+(define (ll-lambda->bytecode formals exp lits)
    (if (not (pair? exp))
       (error "ll-lambda->bytecode: wat " exp))
    (ilist 'bytecode
@@ -623,7 +598,7 @@
    (find-literals null exp))         
 
 (define (ll-value->basil exp)
-   (print "LL->BASIL " exp)
+   (debug "LL->BASIL " exp)
    (cond
       ((lambda? exp)
          (lets
@@ -643,19 +618,6 @@
          exp)
       (else 
          (error "ll-value->basil: wat " exp))))
-
-(test
-   (ll-value->basil
-      '(lambda (a b c) 
-         ((lambda (f)
-            (f a b 1 4095 f))
-            (lambda (a b c d e)
-               (if (eq? c d)
-                  (b a d)
-                  ((lambda (d)
-                     (e a b c d e))
-                     (- d c))))))))
-
 
 
 ;;;
@@ -855,5 +817,81 @@
             (lambda (m tl) (k (%ref L 0) (cons (%ref L 1) tl)))))))
 
 
+;;; 
+;;; Temporary compiler entry 
+;;; 
 
 
+(define (render-heap mem)
+   (foldr string-append ""
+      (cons
+         "uint16_t heap[] = {"
+         (foldr
+            (λ (pos out)
+               (ilist (str (get mem pos 0))
+                  (if (< pos last)
+                     ", "
+                     "")
+                  out))
+            (list "};\n")
+            (iota 0 1 memsize)))))
+
+(define empty-mem
+   (put #empty 'fp 0))
+
+(define (output-heap exp port)
+   (lets ((mem entry (assembler-entry empty-mem exp)))
+      (for-each
+         (λ (thing)
+            (print-to port thing))
+         (list
+            (str "#define INULL  0x" (number->string inull 16))
+            (str "#define ITRUE  0x" (number->string itrue 16))
+            (str "#define IFALSE 0x" (number->string ifalse 16))
+            (str "#define IHALT  0x" (number->string ihalt 16))
+            (str "#define HEAPSIZE " heapsize)
+            (render-heap mem)
+            (str "#define ENTRY " entry)
+            (str "#define FP " (get mem 'fp 'bug))))))
+
+
+(define (test-compiler exp port)
+   (print-to stderr "Compiling " exp)
+   (output-heap 
+      (ll-value->basil exp)
+      port))
+
+(define (maybe op arg)
+   (if arg (op arg) arg))         
+
+(define (myy-entry args)
+   (if (= (length args) 3)
+      (lets
+         ((port (open-input-file (cadr args)))
+          (output (open-output-file (caddr args)))
+          (exp  (maybe read port)))
+         (cond
+            ((not port) 
+               (error "Failed to open " (cadr args)))
+            ((not output)
+               (error "Cannot write to " (caddr args)))
+            (else
+               (test-compiler exp output)
+               (debug "Output written to " (caddr args))
+               (close-port output)
+               0)))
+      (begin
+         (print "temporary usage: myy.scm <test-program> <output-path>")
+         1)))
+'(test
+   (ll-value->basil
+      '(lambda (a b c) 
+         ((lambda (f)
+            (f a b 1 4095 f))
+            (lambda (a b c d e)
+               (if (eq? c d)
+                  (b a d)
+                  ((lambda (d)
+                     (e a b c d e))
+                     (- d c))))))))
+myy-entry
