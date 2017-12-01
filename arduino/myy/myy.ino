@@ -60,6 +60,8 @@ Adafruit_DotStar strip = Adafruit_DotStar(1, DATAPIN, CLOCKPIN, DOTSTAR_BRG);
 #define rawhdrp(x)         ((x) & 64)
 #define fixnum(x)          (((word)x << 2) | (word)BIMM)
 #define immediate(v, t)    (BIMM | t | (v << 2))  // 10vvvvvvvvvvvvtt
+#define highb(x)           (x >> 4)
+#define lowb(x)            (x & 15)
 #define INULL  0x8002
 #define ITRUE  0x800a
 #define IFALSE 0x8012
@@ -292,17 +294,17 @@ void vm(uint16_t entry) {
       /*      opname    (highbits lowbits) */
       case 1: // call (reg | nargs)
         op = ip[1];
-        nargs = op & 7;
-        regs[0] = regs[op>>4];
+        nargs = lowb(op);
+        regs[0] = regs[highb(op)];
         goto apply;
-      case 2: // mov
+      case 2: // mov (from | to)
         op = ip[1];
-        regs[op&7] = regs[op>>4];
+        regs[lowb(op)] = regs[highb(op)];
         ip += 2;
         goto dispatch;
-      case 3: // ldi (to | from) offset, indexed from 0
+      case 3: // ldi (from | to) offset, indexed from 0
         op = ip[1];
-        regs[op&7] = heap[regs[op>>4] + ip[2]];
+        regs[lowb(op)] = heap[regs[highb(op)] + ip[2]];
         ip += 3;
         goto dispatch;
       case 4: // enter n
@@ -312,17 +314,17 @@ void vm(uint16_t entry) {
         op = ip[1];
         //print_regs();
         regs[0] = regs[2];
-        regs[2] = regs[op&7];
-        nargs = op>>4;
+        regs[2] = regs[lowb(op)];
+        nargs = highb(op);
         goto apply;
       case 6: // lde (load from offset via r0)
         op = ip[1];
         Serial.print("LDE: loading r0[");
-        Serial.print(op>>4);
+        Serial.print(highb(op));
         Serial.print("] -> r");
-        Serial.println(op&7);
+        Serial.println(lowb(op));
         out("r0 value is", heap[regs[0]]);
-        regs[op&7] = heap[regs[0] + (op>>4)];
+        regs[lowb(op)] = heap[regs[0] + highb(op)];
         ip += 2;
         goto dispatch;
       case 8: // arity-or-fail
@@ -333,7 +335,7 @@ void vm(uint16_t entry) {
         goto dispatch;
       case  9: // jump-if-eq (a | b) n
         op = ip[1];
-        if (regs[op&7] == regs[op>>4]) {
+        if (regs[lowb(op)] == regs[highb(op)]) {
           ip += ip[2];
         } else {
           ip += 3;
@@ -341,28 +343,28 @@ void vm(uint16_t entry) {
         goto dispatch;
       case 10: // load-enum val reg 
         op = ip[1];
-        regs[op&7] = immediate((op>>4), 2);
-        out("reg now has ", regs[op&7]);
+        regs[lowb(op)] = immediate(highb(op), 2);
+        out("reg now has ", regs[lowb(op)]);
         ip += 2;
         goto dispatch;
       case 11: // load-small-fixnum n reg
         op = ip[1];
-        regs[op&7] = fixnum(op>>4);
+        regs[lowb(op)] = fixnum(highb(op));
         ip += 2;
         goto dispatch;
       case 12: { // add a b reg, only positive fixnums
         op = ip[1];
-        regs[ip[2]] = fixnum(fixval(regs[op>>4]) + fixval(regs[op&7]));
+        regs[ip[2]] = fixnum(fixval(regs[highb(op)]) + fixval(regs[lowb(op)]));
         ip += 3;
         goto dispatch; }
       case 13: { // mul a b reg, only positive fixnums
         op = ip[1];
-        regs[ip[2]] = fixnum(fixval(regs[op>>4]) * fixval(regs[op&7]));
+        regs[ip[2]] = fixnum(fixval(regs[highb(op)]) * fixval(regs[lowb(op)]));
         ip += 3;
         goto dispatch; }
       case 14: { // sub a b reg, only positive fixnums
         op = ip[1];
-        regs[ip[2]] = fixnum(fixval(regs[op>>4]) - fixval(regs[op&7]));
+        regs[ip[2]] = fixnum(fixval(regs[highb(op)]) - fixval(regs[lowb(op)]));
         ip += 3;
         goto dispatch; }
       default:
