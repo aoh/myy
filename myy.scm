@@ -633,7 +633,7 @@
          (let ((reg (get env exp #false)))
             (if reg
                reg
-               (error "alpha-convert: unbound variable " exp))))
+               exp)))
       ((pair? exp)
          (cond
             ((eq? (car exp) 'quote)
@@ -651,8 +651,13 @@
                          (zip cons formals argument-regs))))
                  (list 'lambda (take argument-regs (length formals))
                     (alpha-rename body env))))
+            ((has? '(%proc %clos) (car exp))
+               (cons (car exp)
+                  (map (λ (x) (alpha-rename x env)) (cdr exp))))
             (else
                (map (λ (x) (alpha-rename x env)) exp))))
+      ((number? exp)
+         exp)
       (else
          (error "alpha-rename: wat (usually ok) " exp)
          exp)))
@@ -664,35 +669,20 @@
 (check '(lambda (a) a) (alpha-convert '(lambda (x) x)))
 (check '(lambda (a) (lambda (a) a)) 
         (alpha-convert '(lambda (x) (lambda (y) y))))
-
-
-;;;
-;;; Literal conversion
-;;;
-
-; convert values which are known but not loadable via code to literals
-
-; (λ (C a)
-;    (%close 
-;      (λ (C k x) (a) (k (%ref C 0)))
-;      a))
+(check 
+   '(%proc (lambda (a b) (%close a 0 b))
+           (lambda (a b) (%ref a 0)))
+   (alpha-convert 
+      '(%proc 
+         (lambda (L x) (%close L 0 x))
+         (lambda (E y) (%ref E 0)))))
 
 ;;;
-;;; CP conversion
-;;;
-
-; closure passing style - receive closure- (and later literal-) bindings via first argument
-; note: closure always has something on the first slot (later stages possibly literals)
-
-; (lambda (c x) (c x)) → (_lambda (C c x) () (c x))
-; (lambda (x) (lambda (y) x)) → 
-;    (λ (C x) 
-;     (%close
-;        (λ (C y) (x) (%ref C 0))
-;        x))
-
 ;;; CLP, closure and literal passing style
+;;;
 
+; closure- and literal passing style: make references to environment variables 
+; and values not loadable or referable by bytecode instructions alone explicit.
 
 ; (lambda (x) 9000) → (%proc (lambda (L x) (%ref x 0)) 9000)
 ; (lambda (x) (lambda (y) y)) → 
@@ -701,6 +691,7 @@
 ; (lambda (x) (lambda (y) x)) → 
 ;   (%proc (lambda (C x) (%proc-imm 0 x)) ; <- close literal at offset 0 with x
 ;      (lambda (C y) (%ref C 0)))
+
    
 ;;;
 ;;; CPS conversion
@@ -858,17 +849,22 @@
 (define (test-compiler exp port)
    (print-to stderr "Compiling " exp)
    (output-heap 
-      (ll-value->basil exp)
+      (ll-value->basil (alpha-convert exp))
       port))
 
 (define (maybe op arg)
    (if arg (op arg) arg))         
 
+(define (maybe-open-output-file path)
+   (if (equal? path "-")
+      stdout
+      (open-output-file path)))
+
 (define (myy-entry args)
    (if (= (length args) 3)
       (lets
          ((port (open-input-file (cadr args)))
-          (output (open-output-file (caddr args)))
+          (output (maybe-open-output-file (caddr args)))
           (exp  (maybe read port)))
          (cond
             ((not port) 
@@ -883,15 +879,5 @@
       (begin
          (print "temporary usage: myy.scm <test-program> <output-path>")
          1)))
-'(test
-   (ll-value->basil
-      '(lambda (a b c) 
-         ((lambda (f)
-            (f a b 1 4095 f))
-            (lambda (a b c d e)
-               (if (eq? c d)
-                  (b a d)
-                  ((lambda (d)
-                     (e a b c d e))
-                     (- d c))))))))
+
 myy-entry
