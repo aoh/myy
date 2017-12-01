@@ -10,8 +10,14 @@ The main goals are to put small microchips to good use, get a next generaion
 runtime for/of Owl Lisp, and to get a really compact and portable system 
 capable of running on various runtims and kinds of hardware.
 
-Current status: Myy can build simple programs into heap images, which can be 
-fairly efficiently evaluated by a 16-bit VM running on Adafruit Trinket M0.
+
+## Status
+
+Myy is about a week old. It can run compile simple programs to heap images, 
+which can be fairly efficiently evaluated by a 16-bit VM running on an Adafruit
+Trinket M0. The compiler chain steps are mostly clear, but only a few of the 
+lower level transformations are currently implemented.
+
 
 ## Usage
 
@@ -49,4 +55,4 @@ It is often convenient to start a terminal, tmux window etc running
 `watch ol --run myy.scm ourprogram.myy -` or `watch make` when making 
 changes to the compiler to see the effect of the changes while they are 
 being made.
- 
+
