@@ -10,9 +10,9 @@ of memory to native code on desktops and webassembly.
 ## Status
 
 Myy is about a week old. It can compile simple programs to heap images, 
-which can be fairly efficiently evaluated on a 16-bit VM running on an Adafruit
-Trinket M0. The compiler chain steps are mostly clear, but only a few of the 
-lower level transformations are currently implemented.
+which can be fairly efficiently evaluated on a 16-bit VM. The compiler 
+chain steps are mostly clear, but only a few of the lower level 
+transformations are currently implemented.
 
 
 ## Usage
@@ -52,4 +52,8 @@ It is often convenient to start a terminal, tmux window etc running
 changes to the compiler to see the effect of the changes while they are 
 being made.
 
+You can open the Arduino IDE and open arduino/myy/myy.ino after running `make` 
+and flash the VM along with the compiled heap to your device and read output 
+from the serial console. Currently a light pulsating between green and yellow
+indicates a run, which successfully halted in some value without erros.
 
