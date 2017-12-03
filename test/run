@@ -1,0 +1,22 @@
+#!/bin/bash
+
+die() {
+   echo "ERROR: $@"
+   exit 1
+}
+
+echo "Running all tests"
+for TEST in test/*.scm
+do
+   echo -n "$TEST, c"
+   bin/ol --run myy.scm -o $TEST.c -p unix $TEST > /dev/null 2>&1 || die "compile failed"
+   echo -n ", bin"
+   cc -o $TEST.bin $TEST.c || die "C compilation failed"
+   echo -n ", ex"
+   test -x $TEST.bin
+   ./$TEST.bin
+   RESULT=$?
+   WANTED=$(cat $TEST.exit)
+   echo " -> $RESULT ($WANTED)"
+   cat $TEST.exit | grep -q "^$RESULT$"
+done

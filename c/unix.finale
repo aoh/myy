@@ -1,0 +1,7 @@
+int main() {
+   int r;  
+   for (r = 0; r < NREGS; r++) {
+      regs[r] = INULL;
+   }
+   return vm(ENTRY);
+}

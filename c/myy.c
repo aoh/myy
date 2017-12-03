@@ -1,5 +1,5 @@
 #include <inttypes.h>
-#include "myy.h"
+//#include "myy.h"
 
 /*
  ptr:    [00pppppp pppppppp]
@@ -158,13 +158,5 @@ int vm(uint16_t entry) {
   } else {
     return 124;
   }
-}
-
-int main() {
-   int r;  
-   for (r = 0; r < NREGS; r++) {
-      regs[r] = INULL;
-   }
-   return vm(ENTRY);
 }
 

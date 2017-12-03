@@ -3,9 +3,9 @@ OWLURL=https://github.com/aoh/owl-lisp/releases/download/v0.1.14/ol-0.1.14.c.gz
 USR_BIN_OL=/usr/bin/ol
 HEAP=arduino/myy/myy.h
 
-everything: build test
+everything: test build
 
-build: arduino/myy/myy.h
+build: arduino/myy/myy.ino
 
 bin/ol: tmp/ol.c
 	mkdir -p bin
@@ -15,20 +15,17 @@ tmp/ol.c:
 	mkdir -p tmp
 	curl -L https://github.com/aoh/owl-lisp/releases/download/v0.1.14/ol-0.1.14.c.gz | gzip -d > tmp/ol.c
 
-# a fixed test program for now
-$(HEAP): bin/ol myy.scm test/foo.myy
-	bin/ol --run myy.scm test/foo.myy $(HEAP)
+arduino/myy/myy.ino: bin/ol myy.scm heap.scm
+	bin/ol --run myy.scm -o arduino/myy/myy.ino -p arduino heap.scm
 
-build: $(HEAP)
-	# heap ready to be included to arduino/myy/myy.ino
+build: arduino/myy/myy.ino
 
-test: $(HEAP)
-	grep -q FP $(HEAP)
-	grep -q heap $(HEAP)
+test: bin/ol myy.scm
+	test/run
 
 clean:
 	-rm -rf tmp
-	-rm $(HEAP)
+	-rm arduino/myy/myy.ino
 	-rm -rf bin
 
 .PHONY: test build clean

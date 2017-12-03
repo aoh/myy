@@ -1,5 +1,6 @@
 #!/usr/bin/ol --run
 
+
 ;;; 
 ;;; System settings 
 ;;; 
@@ -14,10 +15,6 @@
       (λ (x) (display-to stderr x))
       (append args (list "\n"))))
 
-
-;;;
-;;; Todo: VVM for running tests
-;;;
 
 ;;; 
 ;;; Minimal testing
@@ -332,8 +329,15 @@
       ((eq? op '-) 'sub)
       ((eq? op '*) 'mul)
       ((eq? op '/) 'div)
+      ((eq? op 'cons) 'cons)
       (else #false)))
 
+(define (unary-primop->opcode op)
+   (cond
+      ((eq? op 'car) 'car)
+      ((eq? op 'cdr) 'cdr)
+      (else #false)))
+      
 (define (prim-call-to target exp)
    (cond
       ((not (pair? exp))
@@ -341,6 +345,12 @@
       ((not (all register? (cdr exp)))
          ;; values must be in registers
          #false)
+      ((unary-primop->opcode (car exp)) =>
+         (λ (op)
+            (if (and (all register? (cdr exp)) 
+                     (= (length (cdr exp)) 1))
+               (cons op (append (map reg-num (cdr exp)) (list (reg-num target))))
+               (error "prim-call-to: invalid args for " exp))))
       ((binary-primop->opcode (car exp)) =>
          (λ (op)
             (if (and (all register? (cdr exp)) 
@@ -698,7 +708,7 @@
 ;;;
 
 ; (lambda (x) x) → (lambda (c x) (c x))
-; (lambda (x) (x x) → (lambda (c x) (x c x))
+; (lambda (x) (x x)) → (lambda (c x) (x c x))
 
 ; input: macro-expanded code
 ; operation: add continuations *and* thread continuation
@@ -812,7 +822,29 @@
 ;;; Temporary compiler entry 
 ;;; 
 
+(define (maybe op arg)
+   (if arg (op arg) arg))         
 
+(import (owl args)) ;; command line argument parsing
+
+(define (accept-platform s)
+   (if (or (equal? s "unix") 
+           (equal? s "arduino"))
+       s
+       #false))
+
+(define command-line-rules
+   (cl-rules
+      `((help "-h" "--help" comment "show this thing")
+        (output "-o" "--output" has-arg 
+           default "-"
+           comment "output file, or - for stdout")
+        (runtime "-r" "--runtime" has-arg
+           default "c/myy.c")
+        (platform "-p" "--platform" cook ,accept-platform
+           default "arduino"
+           comment "choose platform to generate code for (unix or arduino)"))))
+                                          
 (define (render-heap mem)
    (foldr string-append ""
       (cons
@@ -852,32 +884,63 @@
       (ll-value->basil (alpha-convert exp))
       port))
 
-(define (maybe op arg)
-   (if arg (op arg) arg))         
-
 (define (maybe-open-output-file path)
    (if (equal? path "-")
       stdout
       (open-output-file path)))
 
-(define (myy-entry args)
-   (if (= (length args) 3)
-      (lets
-         ((port (open-input-file (cadr args)))
-          (output (maybe-open-output-file (caddr args)))
-          (exp  (maybe read port)))
-         (cond
-            ((not port) 
-               (error "Failed to open " (cadr args)))
-            ((not output)
-               (error "Cannot write to " (caddr args)))
-            (else
-               (test-compiler exp output)
-               (debug "Output written to " (caddr args))
-               (close-port output)
-               0)))
-      (begin
-         (print "temporary usage: myy.scm <test-program> <output-path>")
-         1)))
+(import (owl sexp))
 
-myy-entry
+(define (myy-read-file path)
+   (maybe car (maybe list->sexps (file->list path))))
+
+(define (output-platform dict section port)
+   (lets
+      ((path (str "c/" (getf dict 'platform) "." section))
+       (data (file->list path)))
+      (if data
+         (write-bytes port data)
+         (error "failed to read platform code from " path))))
+
+(define (myy-entry dict args)
+   (cond
+      ((getf dict 'help)
+         (print (format-rules command-line-rules))
+         0)
+      ((not (getf dict 'runtime-data)) ;; load runtime if necessary
+         (let ((data (file->list (getf dict 'runtime))))
+            (if data
+               (myy-entry (put dict 'runtime-data data) args)
+               (error "failed to read runtime " (getf dict 'runtime)))))
+      ((null? args)
+         (print "I need something to compile")
+         1)
+      (else
+         (lets
+            ((port (open-input-file (car args)))
+             (output (maybe-open-output-file (getf dict 'output)))
+             (exp  (maybe read port)))
+            (cond
+               ((not port) 
+                  (error "Failed to open " (car args)))
+               ((not output)
+                  (error "Cannot write to " (getf dict 'output)))
+               (else
+                  ;; output heap contents
+                  (print "Running test compiler")
+                  (output-platform dict "prelude" output)
+                  (test-compiler exp output)
+                  (debug "Output written to " (getf dict 'output))
+                  ;; output shared runtime
+                  (print "writing runtime")
+                  (write-bytes output 
+                     (get dict 'runtime-data null))
+                  (print "ok")
+                  (output-platform dict "finale" output)
+                  (close-port output)
+                  0))))))
+
+(λ (args)
+   (process-arguments (cdr args) command-line-rules
+      "usage: myy.scm [args] [sourcefile]"
+      myy-entry))
