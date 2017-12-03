@@ -351,6 +351,11 @@ void vm(uint16_t entry) {
         regs[ip[2]] = fixnum(fixval(regs[highb(op)]) - fixval(regs[lowb(op)]));
         ip += 3;
         goto dispatch; }
+      case 15: { // div a b reg, only positive fixnums
+        op = ip[1];
+        regs[ip[2]] = fixnum(fixval(regs[highb(op)]) / fixval(regs[lowb(op)]));
+        ip += 3;
+        goto dispatch; }
       default:
         fail("bad op");
     }
