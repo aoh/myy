@@ -1,16 +1,16 @@
 #!/usr/bin/ol --run
 
-;;; 
-;;; System settings 
-;;; 
+;;;
+;;; System settings
+;;;
 
-; 256 when testing, ~8000 on trinket   
+; 256 when testing, ~8000 on trinket
 (define memsize 256)
 
 (define last (- memsize 1))
 
 (define (debug . args)
-   (for-each 
+   (for-each
       (λ (x) (display-to stderr x))
       (append args (list "\n"))))
 
@@ -19,7 +19,7 @@
 ;;; Todo: VVM for running tests
 ;;;
 
-;;; 
+;;;
 ;;; Minimal testing
 ;;;
 
@@ -28,7 +28,7 @@
       ((check desired term)
          (let ((result term))
             (if (not (equal? result desired))
-               (error "The computer says no." 
+               (error "The computer says no."
                   (str (quote term) " is " result " instead of " desired ".")))))))
 
 (check 42 (* 2 (+ 20 1)))
@@ -85,12 +85,12 @@
          (sexp-cases var . cases))))
 
 (check 'yes (sexp-case 'a (b () 'no) (a () 'yes) (else 'wat)))
-(check 'yes 
-   (sexp-case '(a b) 
+(check 'yes
+   (sexp-case '(a b)
       ((?) (x) 'no)
       ((? ?) (x y) 'yes)
       (else 42)))
-   
+
 
 
 
@@ -121,7 +121,7 @@
 
 (define (allocated? desc) (eq? 0 (band bimm desc)))
 (define (immediate? desc) (not (allocated? desc)))
-(define (fixnum n) 
+(define (fixnum n)
    (make-immediate n #b00))
 
 (define (fixval desc)
@@ -151,7 +151,7 @@
          ifalse)
       ((eq? val null)
          inull)
-      (else 
+      (else
          #false)))
 
 (define (argto arg to)
@@ -181,7 +181,7 @@
                (ilist 12 (argto (cadr op) (caddr op)) (car (cdddr op))
                   (assemble-bytecode (cdr lst))))
             ((eq? (car op) 'enter)
-               (ilist 4 (cadr op) 
+               (ilist 4 (cadr op)
                   ;; leave tail for debugging info
                   (cdr lst)))
             ((eq? (car op) 'sub)
@@ -189,6 +189,9 @@
                   (assemble-bytecode (cdr lst))))
             ((eq? (car op) 'mul)
                (ilist 13 (argto (cadr op) (caddr op)) (car (cdddr op))
+                  (assemble-bytecode (cdr lst))))
+            ((eq? (car op) 'div)
+               (ilist 15 (argto (cadr op) (caddr op)) (car (cdddr op))
                   (assemble-bytecode (cdr lst))))
             ((eq? (car op) 'ldi) ;; ldi from offset to -> LDI (from | to) <offset>
                (ilist 3 (argto (cadr op) (car (cdddr op))) (caddr op)
@@ -205,7 +208,7 @@
                       (jump-len (+ 3 (length otherwise))))
                   (if (> jump-len 255)
                      (error "jeq: jump too large" jump-len))
-                  (ilist 9 (argto (cadr op) (caddr op)) 
+                  (ilist 9 (argto (cadr op) (caddr op))
                      jump-len
                      (append otherwise
                         (assemble-bytecode (cdddr op))))))
@@ -259,7 +262,7 @@
                    (mem desc (burn-bytecode mem code)))
                   (values mem desc)))
             ((eq? (car obj) 'proc)
-               (lets 
+               (lets
                   ((mem fields (assemble-fields mem (cdr obj) assemble))
                    (pos (getf mem 'fp))
                    (hdr (make-header (length fields) tproc)))
@@ -291,7 +294,7 @@
 ;  - explicit thread controller / error handler continuation
 ;  - fixed formal variables corresponding directly to runtime registers
 
-; the code is a very small subset of the supported language, terms of which 
+; the code is a very small subset of the supported language, terms of which
 ; can still be evaluated as such within the full language
 
 ; input: code containing explicit continuations, lambdas and primitives
@@ -343,13 +346,13 @@
          #false)
       ((binary-primop->opcode (car exp)) =>
          (λ (op)
-            (if (and (all register? (cdr exp)) 
+            (if (and (all register? (cdr exp))
                      (= (length (cdr exp)) 2))
                (cons op (append (map reg-num (cdr exp)) (list (reg-num target))))
                (error "prim-call-to: invalid args for " exp))))
-      (else 
+      (else
          #false)))
-      
+
 (define (load-to reg exp lits)
    (cond
       ((symbol? exp)
@@ -387,16 +390,16 @@
                (loop (cdr args) lits (cdr regs) (append loads out))))
          (else
             (error "load-args: wat " args)))))
-   
+
 (define (list-heading-and-len? head len)
    (λ (exp)
       (and (pair? exp)
            (eq? (car exp) head)
            (= (length exp) len))))
-           
+
 (define lambda?
    (list-heading-and-len? 'lambda 3))
-  
+
 (define if?
    (list-heading-and-len? 'if 4))
 
@@ -420,7 +423,7 @@
 (define (dead-register all-regs exp needed-vals)
    (let loop ((regs (cdr all-regs)) (exp (cdr exp)) (pos 1))
       (cond
-         ((null? regs) 
+         ((null? regs)
             #false)
          ((null? exp)
             #false)
@@ -435,11 +438,11 @@
                ((> (length (keep (λ (x) (eq? x (car regs))) all-regs)) 1)
                   ;; we've got more where this came from, fill it!
                   pos)
-               (else 
+               (else
                   ;; only one occurrence of the value - we mustn't lose this!
                   (loop (cdr regs) (cdr exp) (+ pos 1)))))
          (else
-            ;; register has an immediate value, meaning we have put it there 
+            ;; register has an immediate value, meaning we have put it there
             ;; intentionally here, so it's perfect
             (loop (cdr regs) (cdr exp) (+ pos 1))))))
 
@@ -474,7 +477,7 @@
          (equal-prefix? (cdr a) (cdr b)))
       (else
          #false)))
-      
+
 (define (register-dance exp lits)
    (lets
       ((rator (car exp))
@@ -483,7 +486,7 @@
          (set (if (register? rator)
                (cons rator (keep register? exp))
                (keep register? exp))))
-       (solvable? 
+       (solvable?
           (λ (vals)
              (null? (diff needed-regs regs)))))
       (let loop ((regs   regs)
@@ -515,7 +518,7 @@
                            (loop (lset regs pos desired-val) (cons (list 'ldf desired-val pos) rinsts)))
                         ((offset lits desired-val) =>
                            (λ (lpos)
-                              (loop 
+                              (loop
                                  (lset regs pos desired-val)
                                  (cons (list 'lde (+ lpos 2) pos) rinsts))))
                         (else
@@ -558,7 +561,7 @@
             steps))
       (else
          (error "ll-exp->bytecode: unable to generate call: " exp))))
-                  
+
 ;; literals are accessable via r0
 (define (ll-lambda->bytecode formals exp lits)
    (if (not (pair? exp))
@@ -567,11 +570,11 @@
       (list 'arity (length formals))
       (ll-exp->bytecode exp lits)))
 
-(define (maybe-drop-primop exp) 
+(define (maybe-drop-primop exp)
    (if (has? primops (car exp))
       (cdr exp)
       exp))
-   
+
 (define (find-literals seen exp)
    (cond
       ((lambda? exp)
@@ -584,10 +587,10 @@
          seen)
       ((list? exp)
          (if (lambda? (car exp))
-            (fold find-literals 
+            (fold find-literals
                (find-literals seen (caddr (car exp)))
                (cdr exp))
-            (fold find-literals seen 
+            (fold find-literals seen
                (maybe-drop-primop exp))))
       ((reg-num exp)
          seen)
@@ -595,7 +598,7 @@
          (error "find-literals: what is " exp))))
 
 (define (literals exp)
-   (find-literals null exp))         
+   (find-literals null exp))
 
 (define (ll-value->basil exp)
    (debug "LL->BASIL " exp)
@@ -605,7 +608,7 @@
             ((formals (cadr exp))
              (body (caddr exp))
              (lits (literals body))
-             (bc 
+             (bc
                (ll-lambda->bytecode
                    (cadr exp)
                    (caddr exp)
@@ -616,7 +619,7 @@
                   (map ll-value->basil lits)))))
       ((and (fixnum? exp) (>= exp 0) (< exp 4096))
          exp)
-      (else 
+      (else
          (error "ll-value->basil: wat " exp))))
 
 
@@ -641,11 +644,11 @@
             ((primitive? (car exp))
                (cons (car exp) (map (λ (exp) (alpha-rename exp env)) (cdr exp))))
             ((eq? (car exp) 'lambda)
-               ;; fixme: check argument count 
-               (lets 
+               ;; fixme: check argument count
+               (lets
                   ((formals (cadr exp))
                    (body (caddr exp))
-                   (env 
+                   (env
                       (fold (λ (env var-reg) (put env (car var-reg) (cdr var-reg)))
                          env
                          (zip cons formals argument-regs))))
@@ -661,19 +664,19 @@
       (else
          (error "alpha-rename: wat (usually ok) " exp)
          exp)))
-      
-         
+
+
 (define (alpha-convert exp)
    (alpha-rename exp #empty))
 
 (check '(lambda (a) a) (alpha-convert '(lambda (x) x)))
-(check '(lambda (a) (lambda (a) a)) 
+(check '(lambda (a) (lambda (a) a))
         (alpha-convert '(lambda (x) (lambda (y) y))))
-(check 
+(check
    '(%proc (lambda (a b) (%close a 0 b))
            (lambda (a b) (%ref a 0)))
-   (alpha-convert 
-      '(%proc 
+   (alpha-convert
+      '(%proc
          (lambda (L x) (%close L 0 x))
          (lambda (E y) (%ref E 0)))))
 
@@ -681,18 +684,18 @@
 ;;; CLP, closure and literal passing style
 ;;;
 
-; closure- and literal passing style: make references to environment variables 
+; closure- and literal passing style: make references to environment variables
 ; and values not loadable or referable by bytecode instructions alone explicit.
 
 ; (lambda (x) 9000) → (%proc (lambda (L x) (%ref x 0)) 9000)
-; (lambda (x) (lambda (y) y)) → 
+; (lambda (x) (lambda (y) y)) →
 ;    (%proc (lambda (L x) (%ref L 0))
 ;        (lambda (C y) y))
-; (lambda (x) (lambda (y) x)) → 
+; (lambda (x) (lambda (y) x)) →
 ;   (%proc (lambda (C x) (%proc-imm 0 x)) ; <- close literal at offset 0 with x
 ;      (lambda (C y) (%ref C 0)))
 
-   
+
 ;;;
 ;;; CPS conversion
 ;;;
@@ -721,9 +724,9 @@
 ; output: sexp in which references to global values are replaced by the corresponding values
 
 
-;;; 
+;;;
 ;;; Macro expansion
-;;; 
+;;;
 
 ; input: regular lisp, env
 ; output: lisp without macros
@@ -762,7 +765,7 @@
              lst
              (cons (fn (car lst))
                    (map fn (cdr lst))))))))
- 
+
 '(define map
    (lambda (m k fn lst)
       ((lambda (rec)
@@ -770,7 +773,7 @@
        (lambda (m k fn lst rec)
           (if (null? lst)
              (k m lst)
-             (fn m 
+             (fn m
                 (lambda (m hd)
                    (rec m
                       (lambda (m tl)
@@ -785,7 +788,7 @@
        (lambda (m k fn lst rec)
           (if (null? lst)
              (k m lst)
-             (fn m 
+             (fn m
                 (lambda (m hd)
                    (rec m
                       (lambda (m tl)
@@ -808,9 +811,9 @@
             (lambda (m tl) (k (%ref L 0) (cons (%ref L 1) tl)))))))
 
 
-;;; 
-;;; Temporary compiler entry 
-;;; 
+;;;
+;;; Temporary compiler entry
+;;;
 
 
 (define (render-heap mem)
@@ -848,12 +851,12 @@
 
 (define (test-compiler exp port)
    (print-to stderr "Compiling " exp)
-   (output-heap 
+   (output-heap
       (ll-value->basil (alpha-convert exp))
       port))
 
 (define (maybe op arg)
-   (if arg (op arg) arg))         
+   (if arg (op arg) arg))
 
 (define (maybe-open-output-file path)
    (if (equal? path "-")
@@ -867,7 +870,7 @@
           (output (maybe-open-output-file (caddr args)))
           (exp  (maybe read port)))
          (cond
-            ((not port) 
+            ((not port)
                (error "Failed to open " (cadr args)))
             ((not output)
                (error "Cannot write to " (caddr args)))
