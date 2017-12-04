@@ -741,6 +741,45 @@
 
 
 ;;;
+;;; Gensym
+;;;
+
+(define (gensym-id sym)
+   (let ((cs (string->list (symbol->string sym))))
+      (if (and (pair? cs)
+               (eq? (car cs) #\G)
+               (pair? (cdr cs))
+               (> (cadr cs) #\0)) ;; avoid G01 and G1 looking like the same gensym
+         (fold
+            (λ (n char)
+               (and n
+                  (let ((m (- char #\0)))
+                     (if (<= 0 m 9)
+                        (+ (* n 10) m)
+                        #false))))
+            0 (cdr cs)))))
+
+(define (max-gensym-id n x)
+   (cond
+      ((pair? x)
+         (max-gensym-id 
+            (max-gensym-id n (car x))
+            (cdr x)))
+      ((symbol? x)
+         (max n (gensym-id x)))
+      (else n)))
+
+(define (gensym x)
+   (string->symbol 
+      (str "G" (+ 1 (max-gensym-id 0 x)))))
+
+(check 'G1 (gensym 'x))
+(check 'G2 (gensym '(lambda (G1) G1)))
+(check 'G1 (gensym '(G0 G01 G00 G02)))
+(check 'G10001 (gensym '(G1 G10 G100 G100 G1000 G10000)))
+
+
+;;;
 ;;; CPS conversion
 ;;;
 
