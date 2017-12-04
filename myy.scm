@@ -778,15 +778,21 @@
 (check 'G1 (gensym '(G0 G01 G00 G02)))
 (check 'G10001 (gensym '(G1 G10 G100 G100 G1000 G10000)))
 
-
 ;;;
 ;;; CPS conversion
 ;;;
+
+; input: macro-expanded code
+; operation: add continuations *and* thread continuation
+; output: ll-lambda
 
 ; (lambda (x) x) → (lambda (m c x) (c m x))
 ; (lambda (x) (x x)) → (lambda (c m x) (x m c x))
 
 ;; minimal version to get first tests to pass
+
+(define (complex? exp)
+   (not (register? exp)))
 
 (define (cps-to k m exp)
    (if (pair? exp)
@@ -798,19 +804,33 @@
             (list k m 
                (list 'lambda (ilist 'k 'm formals)
                   (cps-to 'k 'm body))))
+         ((if (eq? ? ?) ? ?) (a b then else)
+            (cond
+               ((complex? a)
+                  (error "unhandled a " a))
+               ((complex? b)
+                  (error "unhandled b " b))
+               (else
+                  (list 'if (list 'eq? a b)
+                     (cps-to k m then)
+                     (cps-to k m else)))))
          (else
             (list k m exp)))
       (list k m exp)))
 
 (define (cps exp)
-   (list 'lambda (list 'k 'm)
-      (cps-to 'k 'm exp)))
+   (lets ((m (gensym exp))
+          (k (gensym m)))
+      (list 'lambda (list k m)
+         (cps-to k m exp))))
    
-; input: macro-expanded code
-; operation: add continuations *and* thread continuation
-; output: ll-lambda
 
+(check '(lambda (G2 G1) (G2 G1 42))
+       (cps 42))
 
+(check '(lambda (G2 G1) (if (eq? a b) (G2 G1 a) (G2 G1 b)))
+       (cps '(if (eq? a b) a b)))
+    
 ;;;
 ;;; Explicit Recursion
 ;;;
