@@ -296,9 +296,7 @@
 ; input: code containing explicit continuations, lambdas and primitives
 ; output: BASIL sexp, including required linked objects
 
-
-; r0 is silent
-(define argument-regs
+(define registers
    '(a b c d e f g h i j k l m n o p))
 
 (define regs
@@ -390,7 +388,7 @@
          (error "load-to: wat " exp))))
 
 (define (load-args args lits)
-   (let loop ((args args) (lits lits) (regs argument-regs) (out null))
+   (let loop ((args args) (lits lits) (regs registers) (out null))
       (cond
          ((null? args)
             out)
@@ -566,12 +564,13 @@
                 (formals (cadr rator))
                 (body (caddr rator))
                 (rands (cdr exp)))
-            (if (= 1 (length formals) (length rands))
-               ;; binding of one register
-               (append
-                  (load-to (car formals) (car rands) lits)
-                  (ll-exp->bytecode body lits))
-               (error "multiple bind in head lambda in ll" formals))))
+            (fold
+               (λ (tail binding)
+                  (append 
+                     (load-to (car binding) (cdr binding) lits)
+                     tail))
+               (ll-exp->bytecode body lits)
+               (zip cons formals rands))))
       ((register-dance exp lits) =>
          (λ (steps)
             steps))
@@ -646,6 +645,23 @@
 ; input: CPS-converted code, in which arbitrary variables are used
 ; output: code in which a fixed set of variables, corresponding directly to registers, are used
 
+; todo: this will obviously need to change
+
+(define* (unmapped-register env)
+   (lets ((mapped (ff-fold (λ (out k v) (cons v out)) null env))
+          (all    registers)
+          (unmapped (diff registers mapped)))
+      (if (null? unmapped)
+         (error "temporary register allocation found no space for new mapping" env))
+      (car unmapped)))
+         
+(define* (allocate-new-registers env formals)
+   (fold
+      (λ (env formal)
+         (put env formal 
+            (unmapped-register env)))
+      env formals))
+   
 (define (alpha-rename exp env)
    (cond
       ((symbol? exp)
@@ -659,6 +675,18 @@
                exp)
             ((primitive? (car exp))
                (cons (car exp) (map (λ (exp) (alpha-rename exp env)) (cdr exp))))
+            ((lambda? (car exp))
+               (lets
+                  ((formals (cadr (car exp)))
+                   (body (caddr (car exp)))
+                   (new-env (allocate-new-registers env formals)))
+                  (cons
+                     (list 'lambda 
+                        (alpha-rename formals new-env)
+                        (alpha-rename body new-env))
+                     (map 
+                        (λ (arg) (alpha-rename arg env))
+                         (cdr exp)))))
             ((eq? (car exp) 'lambda)
                ;; fixme: check argument count
                (lets
@@ -667,8 +695,8 @@
                    (env
                       (fold (λ (env var-reg) (put env (car var-reg) (cdr var-reg)))
                          env
-                         (zip cons formals argument-regs))))
-                 (list 'lambda (take argument-regs (length formals))
+                         (zip cons formals registers))))
+                 (list 'lambda (take registers (length formals))
                     (alpha-rename body env))))
             ((has? '(%proc %clos) (car exp))
                (cons (car exp)
@@ -716,9 +744,29 @@
 ;;; CPS conversion
 ;;;
 
-; (lambda (x) x) → (lambda (c x) (c x))
-; (lambda (x) (x x)) → (lambda (c x) (x c x))
+; (lambda (x) x) → (lambda (m c x) (c m x))
+; (lambda (x) (x x)) → (lambda (c m x) (x m c x))
 
+;; minimal version to get first tests to pass
+
+(define (cps-to k m exp)
+   (if (pair? exp)
+      (sexp-case exp
+         ((quote ?) (val)
+            (list k m exp))
+         ((lambda ? ?) (formals body)
+            ;; todo - allocated free variables
+            (list k m 
+               (list 'lambda (ilist 'k 'm formals)
+                  (cps-to 'k 'm body))))
+         (else
+            (list k m exp)))
+      (list k m exp)))
+
+(define (cps exp)
+   (list 'lambda (list 'k 'm)
+      (cps-to 'k 'm exp)))
+   
 ; input: macro-expanded code
 ; operation: add continuations *and* thread continuation
 ; output: ll-lambda
