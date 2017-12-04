@@ -3,20 +3,27 @@
 die() {
    echo "ERROR: $@"
    exit 1
+   sleep 10
 }
 
-echo "Running all tests"
+test -f failures && rm failures
+
+echo "Running tests"
 for TEST in test/*.scm
 do
-   echo -n "$TEST, c"
-   bin/ol --run myy.scm -o $TEST.c -p unix $TEST > /dev/null 2>&1 || die "compile failed"
-   echo -n ", bin"
+   echo -n "  $TEST "
+   bin/ol --run myy.scm -o $TEST.c -p unix $TEST > out 2>&1 || die "compile failed"
    cc -o $TEST.bin $TEST.c || die "C compilation failed"
-   echo -n ", ex"
    test -x $TEST.bin
    ./$TEST.bin
    RESULT=$?
    WANTED=$(cat $TEST.exit)
-   echo " -> $RESULT ($WANTED)"
-   cat $TEST.exit | grep -q "^$RESULT$"
+   cat $TEST.exit | grep -q "^$RESULT$" && echo -e "\e[32m✓\e[0m" || { echo  -e "\e[31m❌\e[0m"; echo "$TEST" > failures; }
 done
+
+test -f failures || exit 0
+
+echo "Failed tests: $(cat failures)"
+
+exit 1
+

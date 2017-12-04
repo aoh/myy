@@ -1,6 +1,3 @@
-#include <inttypes.h>
-//#include "myy.h"
-
 /*
  ptr:    [00pppppp pppppppp]
  fixnum: [10ffffff ffffff00] -> 12-bit, good for ADC / DAC

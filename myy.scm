@@ -421,7 +421,7 @@
 (define register-list
    '(a b c d e f g h i j k l m n o p))
 
-(define (loadable? val)
+(define (loadable-fixnum? val)
    (or
       (and (fixnum? val) (>= val 0) (< val 16))
       ;(eq? val #true)
@@ -472,7 +472,9 @@
    (let loop ((lst lst) (pos 0))
       (cond
          ((null? lst)
-            (error "offset: not found: " val))
+            #false
+            ;(error "offset: not found: " val)
+            )
          ((eq? (car lst) val)
             pos)
          (else
@@ -523,13 +525,18 @@
                               (loop
                                  (lset regs pos desired-val)
                                  (cons (list 'mov val-pos pos) rinsts))))
-                        ((loadable? desired-val)
+                        ((loadable-fixnum? desired-val)
                            (loop (lset regs pos desired-val) (cons (list 'ldf desired-val pos) rinsts)))
                         ((offset lits desired-val) =>
                            (λ (lpos)
                               (loop
                                  (lset regs pos desired-val)
                                  (cons (list 'lde (+ lpos 2) pos) rinsts))))
+                        ((load-to pos desired-val lits) =>
+                           (λ (insts)
+                              (loop 
+                                 (lset regs pos desired-val)
+                                 (append (reverse insts) rinsts))))
                         (else
                            (error "register-dance: wat " desired-val))))))
             ((eq? (car regs) '_)
