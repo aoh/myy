@@ -880,14 +880,12 @@
          (((lambda (?) ?) ?) (var body val)
             (cond
                ((or (simple? val) (and (pair? val) (primitive? (car val)) (all register? (cdr val))))
-                  (print "Case x")
                   (list
                      (list 'lambda (list var) (cps-to k m free body))
                      (maybe-cps-lambda val free cps-to)))
                (else
                   (error "unhandled case x " exp))))
          (else
-            (print "Case last " exp)
             (if (and (pair? exp) (primitive? (car exp)))
                `((lambda (,free) (,k ,m ,free)) ,exp)
                ;; all already registers after ANF conversion

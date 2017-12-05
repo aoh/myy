@@ -1,7 +1,7 @@
 bin/
-tmp/
 myy.heap
 arduino/
 test/*.bin
 test/*.c
 test/*.out
+c/ol.c

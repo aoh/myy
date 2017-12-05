@@ -6,6 +6,11 @@ die() {
    sleep 10
 }
 
+success() {
+   rm test/*.{c,bin,out}
+   exit 0
+}
+
 test -f failures && rm failures
 
 echo "Running tests"
@@ -21,7 +26,7 @@ do
    cat $TEST.exit | grep -q "^$RESULT$" && echo "✓" || { echo "❌"; echo "$TEST" > failures; }
 done
 
-test -f failures || exit 0
+test -f failures || success
 
 echo "Failed tests: $(cat failures)"
 
