@@ -25,10 +25,15 @@
          (let ((result term))
             (if (not (equal? result desired))
                (error "The computer says no."
-                  (str (quote term) " is " result " instead of " desired ".")))))))
+                  (str (quote term) " is " result " instead of " desired ".")))))
+      ((check a b term)
+         (lets ((ra rb term))
+            (if (not (equal? (list a b) (list ra rb)))
+               (error "The computer says no."
+                  (str (quote term) " returns " (list ra rb) " instead of " (list a b)".")))))))
 
 (check 42 (* 2 (+ 20 1)))
-
+(check 1 2 (values (+ 0 1) (+ 1 1)))
 
 
 ;;;
@@ -281,7 +286,7 @@
          (error "assemble: wat " obj))))
 
 (define (assembler-entry mem obj)
-   (debug "Assembling " obj)
+   (debug "ASSEMBLE: " obj)
    (assemble mem obj))
 
 ;;;
@@ -410,6 +415,10 @@
 
 (define lambda?
    (list-heading-and-len? 'lambda 3))
+
+(define (quote? exp)
+   (and (pair? exp)
+        (eq? (car exp) 'quote)))
 
 (define if?
    (list-heading-and-len? 'if 4))
@@ -620,7 +629,7 @@
    (find-literals null exp))
 
 (define (ll-value->basil exp)
-   (debug "LL->BASIL " exp)
+   (debug "LL->BASIL: " exp)
    (cond
       ((lambda? exp)
          (lets
@@ -651,7 +660,7 @@
 
 ; todo: this will obviously need to change
 
-(define* (unmapped-register env)
+(define (unmapped-register env)
    (lets ((mapped (ff-fold (λ (out k v) (cons v out)) null env))
           (all    registers)
           (unmapped (diff registers mapped)))
@@ -659,14 +668,14 @@
          (error "temporary register allocation found no space for new mapping" env))
       (car unmapped)))
 
-(define* (allocate-new-registers env formals)
+(define (allocate-new-registers env formals)
    (fold
       (λ (env formal)
          (put env formal
             (unmapped-register env)))
       env formals))
 
-(define* (alpha-rename exp env)
+(define (alpha-rename exp env)
    (cond
       ((symbol? exp)
          (let ((reg (get env exp #false)))
@@ -715,6 +724,7 @@
 
 
 (define (alpha-convert exp)
+   (debug "ALPHA-CONVERT: " exp)
    (alpha-rename exp #empty))
 
 (check '(lambda (a) a) (alpha-convert '(lambda (x) x)))
@@ -748,6 +758,14 @@
 ;;; Gensym
 ;;;
 
+(define (occurs? sym exp)
+   (cond
+      ((eq? exp sym) #true)
+      ((pair? exp)
+         (or (occurs? sym (car exp))
+             (occurs? sym (cdr exp))))
+      (else #false)))
+       
 (define (gensym-id sym)
    (let ((cs (string->list (symbol->string sym))))
       (if (and (pair? cs)
@@ -782,9 +800,14 @@
 (check 'G1 (gensym '(G0 G01 G00 G02)))
 (check 'G10001 (gensym '(G1 G10 G100 G100 G1000 G10000)))
 
+
+
 ;;;
 ;;; CPS conversion
 ;;;
+
+;; note: we use the CPS transformation to also thread another continuation through 
+;; the code for error handling and multithreading purposes
 
 ; input: macro-expanded code
 ; operation: add continuations *and* thread continuation
@@ -795,19 +818,55 @@
 
 ;; minimal version to get first tests to pass
 
-(define (complex? exp)
-   (not (register? exp)))
+(define (cps-vars exp)
+   (if (or (occurs? 'M exp) (occurs? 'K exp))
+      (lets ((m (gensym exp))
+             (k (gensym m)))
+         (values m k))
+      (values 'M 'K)))
 
-(define (cps-to k m exp)
+(define (complex? exp)
+   (not (symbol? exp)))
+
+(define (simple-literal? exp)
+   (or (number? exp)
+       (and (pair? exp) (eq? (car exp) 'quote))))
+
+(define (simple? exp)
+   (or 
+      (symbol? exp)
+      (number? exp)
+      (lambda? exp)))
+
+(define (replace-first lst a b)
+   (cond
+      ((null? lst)
+         (error "replace-first: no occurrence of " a))
+      ((eq? (car lst) a)
+         (cons b (cdr lst)))
+      (else
+         (cons (car lst)
+            (replace-first (cdr lst) a b)))))
+
+;; note, threading free through the code may actually not be needed
+
+(define (maybe-cps-lambda exp free cps-to)
+   (lets ((m k (cps-vars (list free exp))))
+      (sexp-case (cps-to k m free exp)
+         ((? ? ?) (kp mp result)
+            result)
+         (else
+            exp))))
+
+(define (cps-to k m free exp)
    (if (pair? exp)
       (sexp-case exp
          ((quote ?) (val)
             (list k m exp))
          ((lambda ? ?) (formals body)
-            ;; todo - allocated free variables
-            (list k m
-               (list 'lambda (ilist 'k 'm formals)
-                  (cps-to 'k 'm body))))
+            (lets ((body (cps-to k m free body)))
+               (print "body is " body)
+               (list k m (list 'lambda (ilist m k formals) body))))
          ((if (eq? ? ?) ? ?) (a b then else)
             (cond
                ((complex? a)
@@ -815,26 +874,132 @@
                ((complex? b)
                   (error "unhandled b " b))
                (else
-                  (list 'if (list 'eq? a b)
-                     (cps-to k m then)
-                     (cps-to k m else)))))
+                  (lets ((then (cps-to k m free then))
+                         (else (cps-to k m free else)))
+                     (list 'if (list 'eq? a b) then else)))))
+         (((lambda (?) ?) ?) (var body val)
+            (cond
+               ((or (simple? val) (and (pair? val) (primitive? (car val)) (all register? (cdr val))))
+                  (print "Case x")
+                  (list
+                     (list 'lambda (list var) (cps-to k m free body))
+                     (maybe-cps-lambda val free cps-to)))
+               (else
+                  (error "unhandled case x " exp))))
          (else
-            (list k m exp)))
+            (print "Case last " exp)
+            (if (and (pair? exp) (primitive? (car exp)))
+               `((lambda (,free) (,k ,m ,free)) ,exp)
+               ;; all already registers after ANF conversion
+               (ilist (car exp) m k (cdr exp)))))
       (list k m exp)))
 
-(define (cps exp)
-   (lets ((m (gensym exp))
-          (k (gensym m)))
-      (list 'lambda (list k m)
-         (cps-to k m exp))))
+(define* (cps exp)
+   (debug "CPS: " exp)
+   (lets ((m k (cps-vars exp))
+          (free (gensym (list m k exp)))
+          (body (cps-to k m free exp)))
+      (list 'lambda (list m k) body)))
 
-
-(check '(lambda (G2 G1) (G2 G1 42))
+(define (cps-lambda exp)
+   (maybe-cps-lambda exp (gensym exp) cps-to))
+   
+(check '(lambda (M K) (K M 42))
        (cps 42))
 
-(check '(lambda (G2 G1) (if (eq? a b) (G2 G1 a) (G2 G1 b)))
+(check '(lambda (M K) (if (eq? a b) (K M a) (K M b)))
        (cps '(if (eq? a b) a b)))
 
+(check '(lambda (M K x) (x M K x))
+       (cps-lambda '(lambda (x) (x x))))
+
+(print ">>> " (cps-lambda '(lambda (args) ((lambda (G1) ((lambda (G2) (+ G1 G2)) 6)) 3))))
+
+;;;
+;;; A-normal form
+;;;
+
+; Although A-normal form was initially proposed as an alternative to CPS, we use it here 
+; as an intermediate step to allow changing the evaluation order easily for optimization 
+; purposes later, and to simplify the CPS transformation
+
+(define (replace-first-dfs exp val new)
+   (cond
+      ((eq? exp val) 
+         (values new #t))
+      ((quote? exp)
+         (values exp #f))
+      ((list? exp)
+         ;; sexp-case -> if, lambda, etc
+         (let loop ((exp exp))
+            (if (null? exp)
+               (values exp #f)
+               (lets ((hd here? (replace-first-dfs (car exp) val new)))
+                  (if here? 
+                     (values (cons hd (cdr exp)) #t)
+                     (lets ((tl there? (loop (cdr exp))))
+                        (values (cons hd tl) there?)))))))
+     (else
+        (values exp #f))))
+
+
+(define (first-nontrivial exp)
+   (fold
+      (λ (res exp)
+         (or res
+            (cond
+               ((symbol? exp) #false)
+               ((lambda? exp) exp)
+               ((quote? exp) exp)
+               ((number? exp) exp)
+               ((list? exp)
+                  (or (first-nontrivial exp)
+                      exp))
+               (else
+                  (error "anf/first-nontrivial: wat " exp)))))
+      #false exp))
+               
+(check 'b #t           (replace-first-dfs 'a 'a 'b))
+(check 'a #f           (replace-first-dfs 'a 'b 'c))
+(check '(b a) #t       (replace-first-dfs '(a a) 'a 'b))
+(check '(x (x b) a) #t (replace-first-dfs '(x (x a) a) 'a 'b))
+
+(define (anf free exp)
+   (cond
+      ((symbol? exp)
+         exp)
+      ((lambda? exp)
+         (list 'lambda (cadr exp) (anf free (caddr exp))))
+      ((quote? exp)
+         exp)
+      ((list? exp)
+         (let ((bad (first-nontrivial exp)))
+            (if bad
+               (lets
+                  ((this free)
+                   (free (gensym free))
+                   (exp changed? (replace-first-dfs exp bad this)))
+                  `((lambda (,this)
+                     ,(anf free exp))
+                     ,(anf free bad)))
+               exp)))
+      (else
+         exp)))
+
+(define (a-normal-form exp)
+   (debug "ANF: " exp)
+   (anf (gensym exp) exp))
+
+(check '((lambda (G1) (+ a G1)) (+ b c)) 
+       (anf 'G1 '(+ a (+ b c))))
+    
+(check '((lambda (G1) ((lambda (G2) (+ G1 G2)) (+ c d))) (+ a b))
+       (anf 'G1 '(+ (+ a b) (+ c d))))
+    
+(check 
+   '((lambda (G1) ((lambda (G2) (G2 c)) (G1 b))) (k a))
+   (anf 'G1 '(((k a) b) c)))
+   
 ;;;
 ;;; Explicit Recursion
 ;;;
@@ -997,11 +1162,10 @@
             (str "#define ENTRY " entry)
             (str "#define FP " (get mem 'fp 'bug))))))
 
-
 (define (test-compiler exp port)
    (print-to stderr "Compiling " exp)
    (output-heap
-      (ll-value->basil (alpha-convert exp))
+      (ll-value->basil (alpha-convert (cps-lambda (a-normal-form  exp))))
       port))
 
 (define (maybe op arg)
@@ -1063,6 +1227,7 @@
                   (close-port output)
                   0))))))
 
+(import (owl date))
 (λ (args)
    (process-arguments (cdr args) command-line-rules
       "usage: myy.scm [args] [sourcefile]"
