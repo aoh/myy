@@ -12,13 +12,13 @@ echo "Running tests"
 for TEST in test/*.scm
 do
    echo -n "  $TEST "
-   bin/ol --run myy.scm -o $TEST.c -p unix $TEST > out 2>&1 || die "compile failed"
+   bin/ol --run myy.scm -o $TEST.c -p unix $TEST > $TEST.out 2>&1 || die "compile failed"
    cc -o $TEST.bin $TEST.c || die "C compilation failed"
    test -x $TEST.bin
    ./$TEST.bin
    RESULT=$?
    WANTED=$(cat $TEST.exit)
-   cat $TEST.exit | grep -q "^$RESULT$" && echo -e "\e[32m✓\e[0m" || { echo  -e "\e[31m❌\e[0m"; echo "$TEST" > failures; }
+   cat $TEST.exit | grep -q "^$RESULT$" && echo "✓" || { echo "❌"; echo "$TEST" > failures; }
 done
 
 test -f failures || exit 0
@@ -26,4 +26,3 @@ test -f failures || exit 0
 echo "Failed tests: $(cat failures)"
 
 exit 1
-

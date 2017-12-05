@@ -119,7 +119,7 @@ int vm(uint16_t entry) {
           ip += 3;
         }
         goto dispatch;
-      case 10: // load-enum val reg 
+      case 10: // load-enum val reg
         op = ip[1];
         regs[lowb(op)] = immediate(highb(op), 2);
         ip += 2;
@@ -131,7 +131,7 @@ int vm(uint16_t entry) {
         goto dispatch;
       case 12: { // add a b reg, only positive fixnums
         op = ip[1];
-        regs[ip[2]] = fixnum(fixval(regs[highb(op)]) + fixval(regs[lowb(op)]));
+        regs[ip[2]] = fixnum((fixval(regs[highb(op)]) + fixval(regs[lowb(op)])));
         ip += 3;
         goto dispatch; }
       case 13: { // mul a b reg, only positive fixnums
@@ -141,11 +141,22 @@ int vm(uint16_t entry) {
         goto dispatch; }
       case 14: { // sub a b reg, only positive fixnums
         op = ip[1];
-        regs[ip[2]] = fixnum(fixval(regs[highb(op)]) - fixval(regs[lowb(op)]));
+        regs[ip[2]] = fixnum((fixval(regs[highb(op)]) - fixval(regs[lowb(op)])));
         ip += 3;
         goto dispatch; }
+      case 15: { // div a b reg, only positive fixnums
+        op = ip[1];
+        regs[ip[2]] = fixnum(fixval(regs[highb(op)]) / fixval(regs[lowb(op)]));
+        ip += 3;
+        goto dispatch; }
+      case 16: { // bit-and a b reg, only positive fixnums
+        op = ip[1];
+        regs[ip[2]] = regs[highb(op)] & regs[lowb(op)];
+        ip += 3;
+        goto dispatch; }
+
       default:
-        return 15;
+        return 17;
     }
     ip++;
     goto dispatch;
@@ -156,4 +167,3 @@ int vm(uint16_t entry) {
     return 124;
   }
 }
-

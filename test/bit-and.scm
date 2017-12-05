@@ -1,0 +1,6 @@
+(lambda (mcp cont vminfo)
+   ((lambda (x y)
+      ((lambda (z)
+         (cont mcp z))
+       (bit-and x y)))
+    7 15))

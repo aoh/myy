@@ -1,8 +1,8 @@
 #!/usr/bin/ol --run
 
-;;; 
-;;; System settings 
-;;; 
+;;;
+;;; System settings
+;;;
 
 ; 256 when testing, ~8000 on trinket
 (define memsize 256)
@@ -189,6 +189,9 @@
             ((eq? (car op) 'div)
                (ilist 15 (argto (cadr op) (caddr op)) (car (cdddr op))
                   (assemble-bytecode (cdr lst))))
+            ((eq? (car op) 'bit-and)
+               (ilist 16 (argto (cadr op) (caddr op)) (car (cdddr op))
+                  (assemble-bytecode (cdr lst))))
             ((eq? (car op) 'ldi) ;; ldi from offset to -> LDI (from | to) <offset>
                (ilist 3 (argto (cadr op) (car (cdddr op))) (caddr op)
                   (assemble-bytecode (cdr lst))))
@@ -329,6 +332,7 @@
       ((eq? op '-) 'sub)
       ((eq? op '*) 'mul)
       ((eq? op '/) 'div)
+      ((eq? op 'bit-and) 'bit-and)
       ((eq? op 'cons) 'cons)
       (else #false)))
 
@@ -337,7 +341,7 @@
       ((eq? op 'car) 'car)
       ((eq? op 'cdr) 'cdr)
       (else #false)))
-      
+
 (define (prim-call-to target exp)
    (cond
       ((not (pair? exp))
@@ -347,7 +351,7 @@
          #false)
       ((unary-primop->opcode (car exp)) =>
          (λ (op)
-            (if (and (all register? (cdr exp)) 
+            (if (and (all register? (cdr exp))
                      (= (length (cdr exp)) 1))
                (cons op (append (map reg-num (cdr exp)) (list (reg-num target))))
                (error "prim-call-to: invalid args for " exp))))
@@ -411,7 +415,7 @@
    (list-heading-and-len? 'if 4))
 
 (define primops
-   '(+ - * / eq? cons car cdr if %ref %close))
+   '(+ - * / bit-and eq? cons car cdr if %ref %close))
 
 (define (primitive? exp)
    (has? primops exp))
@@ -532,7 +536,7 @@
                                  (cons (list 'lde (+ lpos 2) pos) rinsts))))
                         ((load-to pos desired-val lits) =>
                            (λ (insts)
-                              (loop 
+                              (loop
                                  (lset regs pos desired-val)
                                  (append (reverse insts) rinsts))))
                         (else
@@ -566,7 +570,7 @@
                 (rands (cdr exp)))
             (fold
                (λ (tail binding)
-                  (append 
+                  (append
                      (load-to (car binding) (cdr binding) lits)
                      tail))
                (ll-exp->bytecode body lits)
@@ -607,7 +611,7 @@
                (cdr exp))
             (fold find-literals seen
                (maybe-drop-primop exp))))
-      ((reg-num exp)
+      ((register? exp)
          seen)
       (else
          (error "find-literals: what is " exp))))
@@ -654,15 +658,15 @@
       (if (null? unmapped)
          (error "temporary register allocation found no space for new mapping" env))
       (car unmapped)))
-         
+
 (define* (allocate-new-registers env formals)
    (fold
       (λ (env formal)
-         (put env formal 
+         (put env formal
             (unmapped-register env)))
       env formals))
-   
-(define (alpha-rename exp env)
+
+(define* (alpha-rename exp env)
    (cond
       ((symbol? exp)
          (let ((reg (get env exp #false)))
@@ -681,10 +685,10 @@
                    (body (caddr (car exp)))
                    (new-env (allocate-new-registers env formals)))
                   (cons
-                     (list 'lambda 
+                     (list 'lambda
                         (alpha-rename formals new-env)
                         (alpha-rename body new-env))
-                     (map 
+                     (map
                         (λ (arg) (alpha-rename arg env))
                          (cdr exp)))))
             ((eq? (car exp) 'lambda)
@@ -762,7 +766,7 @@
 (define (max-gensym-id n x)
    (cond
       ((pair? x)
-         (max-gensym-id 
+         (max-gensym-id
             (max-gensym-id n (car x))
             (cdr x)))
       ((symbol? x)
@@ -770,7 +774,7 @@
       (else n)))
 
 (define (gensym x)
-   (string->symbol 
+   (string->symbol
       (str "G" (+ 1 (max-gensym-id 0 x)))))
 
 (check 'G1 (gensym 'x))
@@ -801,7 +805,7 @@
             (list k m exp))
          ((lambda ? ?) (formals body)
             ;; todo - allocated free variables
-            (list k m 
+            (list k m
                (list 'lambda (ilist 'k 'm formals)
                   (cps-to 'k 'm body))))
          ((if (eq? ? ?) ? ?) (a b then else)
@@ -823,14 +827,14 @@
           (k (gensym m)))
       (list 'lambda (list k m)
          (cps-to k m exp))))
-   
+
 
 (check '(lambda (G2 G1) (G2 G1 42))
        (cps 42))
 
 (check '(lambda (G2 G1) (if (eq? a b) (G2 G1 a) (G2 G1 b)))
        (cps '(if (eq? a b) a b)))
-    
+
 ;;;
 ;;; Explicit Recursion
 ;;;
@@ -939,12 +943,12 @@
 ;;;
 
 (define (maybe op arg)
-   (if arg (op arg) arg))         
+   (if arg (op arg) arg))
 
 (import (owl args)) ;; command line argument parsing
 
 (define (accept-platform s)
-   (if (or (equal? s "unix") 
+   (if (or (equal? s "unix")
            (equal? s "arduino"))
        s
        #false))
@@ -952,7 +956,7 @@
 (define command-line-rules
    (cl-rules
       `((help "-h" "--help" comment "show this thing")
-        (output "-o" "--output" has-arg 
+        (output "-o" "--output" has-arg
            default "-"
            comment "output file, or - for stdout")
         (runtime "-r" "--runtime" has-arg
@@ -960,7 +964,7 @@
         (platform "-p" "--platform" cook ,accept-platform
            default "arduino"
            comment "choose platform to generate code for (unix or arduino)"))))
-                                          
+
 (define (render-heap mem)
    (foldr string-append ""
       (cons
@@ -1040,7 +1044,7 @@
              (output (maybe-open-output-file (getf dict 'output)))
              (exp  (maybe read port)))
             (cond
-               ((not port) 
+               ((not port)
                   (error "Failed to open " (car args)))
                ((not output)
                   (error "Cannot write to " (getf dict 'output)))
@@ -1052,7 +1056,7 @@
                   (debug "Output written to " (getf dict 'output))
                   ;; output shared runtime
                   (print "writing runtime")
-                  (write-bytes output 
+                  (write-bytes output
                      (get dict 'runtime-data null))
                   (print "ok")
                   (output-platform dict "finale" output)
