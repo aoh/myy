@@ -16,6 +16,7 @@ tmp/ol.c:
 	curl -L https://github.com/aoh/owl-lisp/releases/download/v0.1.14/ol-0.1.14.c.gz | gzip -d > tmp/ol.c
 
 arduino/myy/myy.ino: bin/ol myy.scm heap.scm
+	mkdir -p arduino/myy
 	bin/ol --run myy.scm -o arduino/myy/myy.ino -p arduino heap.scm
 
 build: arduino/myy/myy.ino
