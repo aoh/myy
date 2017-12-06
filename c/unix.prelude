@@ -1,2 +1,13 @@
 #include <inttypes.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 
+void fail(char *reason, int code) {
+   fprintf(stderr, "fail: %s (%d)", reason, code);
+   exit(1);
+}
+
+int put_byte(uint8_t b) {
+   return write(1, &b, 1);
+}

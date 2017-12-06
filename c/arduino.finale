@@ -1,1 +1,8 @@
-not here yet
+void loop() {
+   for (r = 0; r < NREGS; r++) {
+      regs[r] = INULL;
+   }
+   fp = FP;
+   vm(ENTRY);
+   while(1);
+}

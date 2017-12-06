@@ -1,1 +1,25 @@
-not here yet
+#define STATUSLED 13
+
+void fail(char *reason, int code) {
+   Serial.println(reason);
+   Serial.println(code);
+   while(1);
+}
+
+/* minimal I/O */
+uint8_t get_byte() {
+  uint8_t c;
+  while (Serial.available() < 1) 
+    delay(100);
+  c = Serial.read();
+  return c;
+}
+
+int put_byte(uint8_t b) {
+  return Serial.write(b);
+}
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(STATUSLED, OUTPUT);
+}
