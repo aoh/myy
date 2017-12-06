@@ -21,5 +21,11 @@ int put_byte(uint8_t b) {
 
 void setup() {
   Serial.begin(9600);
+  int status = HIGH;
   pinMode(STATUSLED, OUTPUT);
+  while(!Serial) {
+     digitalWrite(STATUSLED, status);
+     delay(500);
+     status = (status == HIGH) ? LOW : HIGH;
+  }
 }

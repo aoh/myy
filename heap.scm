@@ -1,2 +1,11 @@
-(lambda (lit mcp cont a)
-   (cont 7))
+;;
+
+(lambda (args)
+   (let* 
+      ((rec 
+         (lambda (a b rec)
+            (if (eq? a b)
+               a
+               (rec a (- b 1) rec)))))
+      (rec 42 100 rec)))
+
