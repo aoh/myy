@@ -165,7 +165,7 @@
 ;;   load null a, eq x a r, jif r -> jnull a 
 ;;   if sequence w/ fixed eq target -> jump table
 
-(define* (assemble-bytecode lst)
+(define (assemble-bytecode lst)
    (if (null? lst)
       null
       (lets ((op (car lst))
@@ -242,7 +242,7 @@
 (define tproc      0)
 (define tpair      3)
 
-(define* (chunk lst)
+(define (chunk lst)
    (let loop ((lst lst) (last #f))
       (cond
          ((null? lst)
@@ -985,6 +985,12 @@
 (check '(b a) #t       (replace-first-dfs '(a a) 'a 'b))
 (check '(x (x b) a) #t (replace-first-dfs '(x (x a) a) 'a 'b))
 
+;; drop leading lambda if present
+(define (maybe-drop-lambda exp)
+   (if (lambda? (car exp))
+      (cdr exp)
+      exp))
+   
 (define (anf free exp)
    (cond
       ((symbol? exp)
@@ -1005,17 +1011,29 @@
                `(if ,(cadr exp)
                   ,(anf free (caddr exp))
                   ,(anf free (cadddr exp))))))
+      ((null? exp)
+         (error "anf: exp is null: " exp))
       ((list? exp)
-         (let ((bad (first-nontrivial exp)))
-            (if bad
-               (lets
-                  ((this free)
-                   (free (gensym free))
-                   (exp changed? (replace-first-dfs exp bad this)))
-                  `((lambda (,this)
-                     ,(anf free exp))
-                     ,(anf free bad)))
-               exp)))
+         (let ((bad (first-nontrivial (maybe-drop-lambda exp))))
+            (cond
+               (bad
+                  ;; something needs to be computed and bound
+                  (lets
+                     ((this free)
+                      (free (gensym free))
+                      (exp changed? (replace-first-dfs exp bad this)))
+                     `((lambda (,this)
+                        ,(anf free exp))
+                        ,(anf free bad))))
+               ((lambda? (car exp))
+                  ;; values ready and body of lambda can be converted to anf
+                  (let ((op (car exp)))
+                     (cons
+                        `(lambda ,(cadr op) ,(anf free (caddr op)))
+                        (cdr exp))))
+               (else
+                  ;; all done 
+                  exp))))
       (else
          exp)))
 
