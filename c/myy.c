@@ -44,11 +44,11 @@
 #define hdrsize(h)         ((h >> 7) & 127) // header is not counted
 
 word regs[16];
-word fp = 0;
+word fp = FP;
 
 int vm(uint16_t entry) {
   uint8_t nargs = 3;
-  uint16_t rator;
+  uint16_t tmp;
   uint16_t h;
   uint8_t *ip;
   uint8_t op;
@@ -57,9 +57,9 @@ int vm(uint16_t entry) {
   regs[2] = IHALT; // halt cont
   regs[3] = INULL; // very little machine info
   apply:
-  rator = regs[0];
-  if (immp(rator)) {
-    if (rator == IHALT) {
+  tmp = regs[0];
+  if (immp(tmp)) {
+    if (tmp == IHALT) {
       if(fixnump(regs[2])) {
          return fixval(regs[2]);
       } else {
@@ -69,10 +69,10 @@ int vm(uint16_t entry) {
       return 126;
     }
   }
-  h = hdrtype(heap[rator]);
+  h = hdrtype(heap[tmp]);
   if (h == TBYTECODE) {
     dispatch_bytecode:
-    ip = (uint8_t *) (heap + rator + 1);
+    ip = (uint8_t *) (heap + tmp + 1);
     dispatch:
     switch(*ip) {
       /*      opname    (highbits lowbits) */
@@ -168,13 +168,35 @@ int vm(uint16_t entry) {
           ip += ip[2];
         }
         goto dispatch;
+      case 18: // car
+        op = ip[1];
+        regs[lowb(op)] = heap[regs[highb(op)] + 1];
+        ip += 2;
+        goto dispatch;
+      case 19: // cdr
+        op = ip[1];
+        regs[lowb(op)] = heap[regs[highb(op)] + 2];
+        ip += 2;
+        goto dispatch;
+      case 20: // cons
+        op = ip[1];
+        if (fp >= (HEAPSIZE - 3)) { // GC time!
+           return 99;
+        }
+        heap[fp] = HPAIR;
+        heap[fp+1] = regs[highb(op)];
+        heap[fp+2] = regs[lowb(op)];
+        regs[ip[2]] = fp;
+        fp += 2;
+        ip += 3;
+        goto dispatch;
       default:
         return 255;
     }
     ip++;
     goto dispatch;
   } else if (h == TPROC) {
-    rator = heap[rator+1];
+    tmp = heap[tmp+1];
     goto dispatch_bytecode;
   } else {
     return 124;

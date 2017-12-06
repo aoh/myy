@@ -233,6 +233,17 @@
                (ilist 7 (argto (cadr op) (caddr op))
                   (cadddr op)
                   (assemble-bytecode (cdr lst))))
+            ((eq? (car op) 'car)
+               (ilist 18 (argto (cadr op) (caddr op))
+                  (assemble-bytecode (cdr lst))))
+            ((eq? (car op) 'cdr)
+               (ilist 19 (argto (cadr op) (caddr op))
+                  (assemble-bytecode (cdr lst))))
+            ((eq? (car op) 'cons) ;; cons (a | b) to
+               (ilist 20
+                  (argto (cadr op) (caddr op))
+                  (cadddr op)
+                  (assemble-bytecode (cdr lst))))
             (else
                (error "assemble-bytecode: wat " op))))))
 
@@ -1131,6 +1142,7 @@
             (str "#define ITRUE  0x" (number->string itrue 16))
             (str "#define IFALSE 0x" (number->string ifalse 16))
             (str "#define IHALT  0x" (number->string ihalt 16))
+            (str "#define HPAIR  0x" (number->string (make-header 2 tpair) 16))
             (str "#define HEAPSIZE " heapsize)
             (render-heap mem)
             (str "#define ENTRY " entry)
