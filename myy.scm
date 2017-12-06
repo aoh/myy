@@ -11,7 +11,7 @@
 
 (define (debug . args)
    (for-each
-      (λ (x) (display-to stderr x))
+      (λ (x) (display-to stdout x))
       (append args (list "\n"))))
 
 
@@ -158,9 +158,14 @@
 (define (argto arg to)
    (bor (<< arg 4) to))
 
-;; peephole optimizations here (e.g. mov + enter -> call)
+;; peephole optimization possibilites:
+;;   here (e.g. mov + enter -> call)
+;;   mov + mov + ... = movn
+;;   mov a, b ... mov b, c (b not used in between) -> mov a,c
+;;   load null a, eq x a r, jif r -> jnull a 
+;;   if sequence w/ fixed eq target -> jump table
 
-(define (assemble-bytecode lst)
+(define* (assemble-bytecode lst)
    (if (null? lst)
       null
       (lets ((op (car lst))
@@ -208,6 +213,7 @@
                   ;; leave reemainder as such for debugging info
                   (cdr lst)))
             ((eq? (car op) 'jeq)
+               ;; note: currently unused
                (lets ((otherwise (assemble-bytecode (cdr lst)))
                       (jump-len (+ 3 (length otherwise))))
                   (if (> jump-len 255)
@@ -216,6 +222,17 @@
                      jump-len
                      (append otherwise
                         (assemble-bytecode (cdddr op))))))
+            ((eq? (car op) 'jif)
+               (lets ((otherwise (assemble-bytecode (cdr lst)))
+                      (jump-len (+ 3 (length otherwise))))
+                  (if (> jump-len 255)
+                     (error "jif: need a bigger jump instruction for " jump-len))
+                  (ilist 17 (cadr op) jump-len 
+                     (append otherwise (assemble-bytecode (cddr op))))))
+            ((eq? (car op) 'eq) ;; eq (a | b) res
+               (ilist 7 (argto (cadr op) (caddr op))
+                  (cadddr op)
+                  (assemble-bytecode (cdr lst))))
             (else
                (error "assemble-bytecode: wat " op))))))
 
@@ -225,7 +242,7 @@
 (define tproc      0)
 (define tpair      3)
 
-(define (chunk lst)
+(define* (chunk lst)
    (let loop ((lst lst) (last #f))
       (cond
          ((null? lst)
@@ -239,6 +256,7 @@
             (loop (cdr lst) (car lst))))))
 
 (define (burn-bytecode mem code)
+   (debug "BURN: " code)
    (lets ((words (chunk code))
           (words (cons (make-header (length words) tbytecode) words))
           (where (getf mem 'fp)))
@@ -339,6 +357,7 @@
       ((eq? op '/) 'div)
       ((eq? op 'bit-and) 'bit-and)
       ((eq? op 'cons) 'cons)
+      ((eq? op 'eq?) 'eq)
       (else #false)))
 
 (define (unary-primop->opcode op)
@@ -566,12 +585,9 @@
          (let ((test (cadr exp))
                (then (caddr exp))
                (else (car (cdddr exp))))
-            (if (and (pair? test) (eq? (car test) 'eq?) (all symbol? (cdr test)))
-               (cons
-                  (ilist 'jeq (reg-num (cadr test)) (reg-num (caddr test))
-                     (ll-exp->bytecode then lits))
-                  (ll-exp->bytecode else lits))
-               (error "odd test: " test))))
+            (cons
+               (ilist 'jif (reg-num test) (ll-exp->bytecode then lits))
+               (ll-exp->bytecode else lits))))
       ((lambda? (car exp))
          (lets ((rator (car exp))
                 (formals (cadr rator))
@@ -591,9 +607,7 @@
          (error "ll-exp->bytecode: unable to generate call: " exp))))
 
 ;; literals are accessable via r0
-(define (ll-lambda->bytecode formals exp lits)
-   (if (not (pair? exp))
-      (error "ll-lambda->bytecode: wat " exp))
+(define (ll-lambda->basil formals exp lits)
    (ilist 'bytecode
       (list 'arity (length formals))
       (ll-exp->bytecode exp lits)))
@@ -628,6 +642,7 @@
 (define (literals exp)
    (find-literals null exp))
 
+;; todo: literals will be made explicit earlier in the future
 (define (ll-value->basil exp)
    (debug "LL->BASIL: " exp)
    (cond
@@ -637,7 +652,7 @@
              (body (caddr exp))
              (lits (literals body))
              (bc
-               (ll-lambda->bytecode
+               (ll-lambda->basil
                    (cadr exp)
                    (caddr exp)
                    lits)))
@@ -877,9 +892,16 @@
                   (lets ((then (cps-to k m free then))
                          (else (cps-to k m free else)))
                      (list 'if (list 'eq? a b) then else)))))
+         ((if ? ? ?) (test then else)
+            (if (not (symbol? test))
+               (error "cps-to: anf should not have ifs with non-symbol tests: " test))
+            (lets ((then (cps-to k m free then))
+                   (else (cps-to k m free else)))
+               (list 'if test then else)))
          (((lambda (?) ?) ?) (var body val)
             (cond
-               ((or (simple? val) (and (pair? val) (primitive? (car val)) (all register? (cdr val))))
+               ((or (simple? val) 
+                    (and (pair? val) (primitive? (car val)) (all symbol? (cdr val))))
                   (list
                      (list 'lambda (list var) (cps-to k m free body))
                      (maybe-cps-lambda val free cps-to)))
@@ -892,7 +914,7 @@
                (ilist (car exp) m k (cdr exp)))))
       (list k m exp)))
 
-(define* (cps exp)
+(define (cps exp)
    (debug "CPS: " exp)
    (lets ((m k (cps-vars exp))
           (free (gensym (list m k exp)))
@@ -900,6 +922,7 @@
       (list 'lambda (list m k) body)))
 
 (define (cps-lambda exp)
+   (debug "CPS-LAMBDA: " exp)
    (maybe-cps-lambda exp (gensym exp) cps-to))
    
 (check '(lambda (M K) (K M 42))
@@ -970,6 +993,18 @@
          (list 'lambda (cadr exp) (anf free (caddr exp))))
       ((quote? exp)
          exp)
+      ((if? exp)
+         (let ((bad (first-nontrivial (list (cadr exp)))))
+            (if bad
+               (lets ((this free)
+                      (free (gensym free))
+                      (test changed? (replace-first-dfs (cadr exp) bad this)))
+                  `((lambda (,this)
+                     ,(anf free (list 'if test (caddr exp) (cadddr exp))))
+                     ,bad))
+               `(if ,(cadr exp)
+                  ,(anf free (caddr exp))
+                  ,(anf free (cadddr exp))))))
       ((list? exp)
          (let ((bad (first-nontrivial exp)))
             (if bad
@@ -997,7 +1032,7 @@
 (check 
    '((lambda (G1) ((lambda (G2) (G2 c)) (G1 b))) (k a))
    (anf 'G1 '(((k a) b) c)))
-   
+
 ;;;
 ;;; Explicit Recursion
 ;;;
@@ -1022,83 +1057,6 @@
 ; output: lisp without macros
 
 
-
-
-
-
-
-
-; sketching operation
-
-'(define (map fn lst)
-   (if (null? lst)
-      lst
-      (cons (fn (car lst))
-            (map fn (cdr lst)))))
-
-'(define map
-   (lambda (fn lst)
-      ((lambda (rec)
-         (rec fn lst rec))
-       (lambda (fn lst rec)
-          (if (null? lst)
-             lst
-             (cons (fn (car lst))
-                   (map fn (cdr lst))))))))
-
-'(define map
-   (lambda (fn lst)
-      ((lambda (rec)
-         (rec fn lst rec))
-       (lambda (fn lst rec)
-          (if (null? lst)
-             lst
-             (cons (fn (car lst))
-                   (map fn (cdr lst))))))))
-
-'(define map
-   (lambda (m k fn lst)
-      ((lambda (rec)
-         (rec m k fn lst rec))
-       (lambda (m k fn lst rec)
-          (if (null? lst)
-             (k m lst)
-             (fn m
-                (lambda (m hd)
-                   (rec m
-                      (lambda (m tl)
-                         (k m (cons hd tl)))
-                      fn (cdr lst) rec))
-                (car lst)))))))
-
-'(define map
-   (lambda (m k fn lst)
-      ((lambda (rec)
-         (rec m k fn lst rec))
-       (lambda (m k fn lst rec)
-          (if (null? lst)
-             (k m lst)
-             (fn m
-                (lambda (m hd)
-                   (rec m
-                      (lambda (m tl)
-                         (k m (cons hd tl)))
-                      fn (cdr lst) rec))
-                (car lst)))))))
-
-'(define map
-   (%proc
-      (lambda (L m k fn lst)
-         ((lambda (rec)
-            (rec m k fn lst rec))
-           (%ref L 0)))
-      (%proc
-         (lambda (L m k fn lst rec)
-             (if (null? lst)
-                (k m lst)
-                (fn m (%close-ref L 0 k hd) (car lst))))   ; <- need to know the closure info before compiling body
-          (%close (L k hd)
-            (lambda (m tl) (k (%ref L 0) (cons (%ref L 1) tl)))))))
 
 
 ;;;

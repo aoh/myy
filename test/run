@@ -23,7 +23,7 @@ do
    ./$TEST.bin
    RESULT=$?
    WANTED=$(cat $TEST.exit)
-   cat $TEST.exit | grep -q "^$RESULT$" && echo "✓" || { echo "❌"; echo "$TEST" > failures; }
+   cat $TEST.exit | grep -q "^$RESULT$" && echo "✓" || { echo "❌"; echo "$TEST = $RESULT instead of $WANTED"  > failures; }
 done
 
 test -f failures || success

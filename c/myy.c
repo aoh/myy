@@ -105,6 +105,12 @@ int vm(uint16_t entry) {
         regs[lowb(op)] = heap[regs[0] + highb(op)];
         ip += 2;
         goto dispatch;
+      case 7: // eq
+        op = ip[1];
+        // todo, branch avoidable
+        regs[ip[2]] = (regs[highb(op)] == regs[lowb(op)]) ? ITRUE : IFALSE;
+        ip += 3;
+        goto dispatch; 
       case 8: // arity-or-fail
         if (nargs != ip[1]) {
           return 123;
@@ -154,9 +160,16 @@ int vm(uint16_t entry) {
         regs[ip[2]] = regs[highb(op)] & regs[lowb(op)];
         ip += 3;
         goto dispatch; }
-
+      case 17:  // jif reg amount
+        op = ip[1];
+        if (regs[lowb(op)] == IFALSE) {
+          ip += 3;
+        } else {
+          ip += ip[2];
+        }
+        goto dispatch;
       default:
-        return 17;
+        return 255;
     }
     ip++;
     goto dispatch;
