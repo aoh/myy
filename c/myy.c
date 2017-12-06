@@ -190,6 +190,11 @@ int vm(uint16_t entry) {
         fp += 2;
         ip += 3;
         goto dispatch;
+      case 21: // emit
+         op = ip[1];
+         regs[lowb(op)] = (put_byte(fixval(regs[highb(op)])) == 1) ? ITRUE : IFALSE;
+         ip += 2;
+         goto dispatch;
       default:
         return 255;
     }

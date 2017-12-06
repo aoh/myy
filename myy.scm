@@ -239,6 +239,9 @@
             ((eq? (car op) 'cdr)
                (ilist 19 (argto (cadr op) (caddr op))
                   (assemble-bytecode (cdr lst))))
+            ((eq? (car op) 'emit)
+               (ilist 21 (argto (cadr op) (caddr op))
+                  (assemble-bytecode (cdr lst))))
             ((eq? (car op) 'cons) ;; cons (a | b) to
                (ilist 20
                   (argto (cadr op) (caddr op))
@@ -375,6 +378,7 @@
    (cond
       ((eq? op 'car) 'car)
       ((eq? op 'cdr) 'cdr)
+      ((eq? op 'emit) 'emit)
       (else #false)))
 
 (define (prim-call-to target exp)
@@ -454,7 +458,7 @@
    (list-heading-and-len? 'if 4))
 
 (define primops
-   '(+ - * / bit-and eq? cons car cdr if %ref %close))
+   '(+ - * / bit-and eq? cons car cdr if %ref %close emit))
 
 (define (primitive? exp)
    (has? primops exp))
