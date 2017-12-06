@@ -1090,6 +1090,22 @@
 ; output: lisp without macros
 
 
+(define (macro-expand exp env)
+   ;; temporary version with fixed expansions
+   (sexp-case exp
+      ((let* ((? ?) . ?) ?) (var val rest body)
+         (macro-expand 
+            `((lambda (,var) (let* ,rest ,body)) ,val)
+            env))
+      ((let* () ?) (body)
+         (macro-expand body env))
+      (else
+         (if (list? exp)
+            (map (λ (x) (macro-expand x env)) exp)
+            exp))))
+
+(check '((lambda (a) ((lambda (b) (+ a b)) 22)) 11)
+       (macro-expand '(let* ((a 11) (b 22)) (+ a b)) #empty))    
 
 
 ;;;
@@ -1155,7 +1171,7 @@
 (define (test-compiler exp port)
    (print-to stderr "Compiling " exp)
    (output-heap
-      (ll-value->basil (alpha-convert (cps-lambda (a-normal-form  exp))))
+      (ll-value->basil (alpha-convert (cps-lambda (a-normal-form (macro-expand exp #empty)))))
       port))
 
 (define (maybe op arg)

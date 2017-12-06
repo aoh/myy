@@ -20,7 +20,7 @@ do
    bin/ol --run myy.scm -o $TEST.c -p unix $TEST > $TEST.out 2>&1 || die "compile failed"
    cc -o $TEST.bin $TEST.c || die "C compilation failed"
    test -x $TEST.bin
-   ./$TEST.bin
+   ./$TEST.bin > /dev/null
    RESULT=$?
    WANTED=$(cat $TEST.exit)
    cat $TEST.exit | grep -q "^$RESULT$" && echo "✓" || { echo "❌"; echo "$TEST = $RESULT instead of $WANTED"  > failures; }
