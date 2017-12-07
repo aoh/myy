@@ -105,7 +105,10 @@
 ; header: [10ssssss sRtttt11] -> 32 types (16 raw, 16 alloc), 64 words max size
 
 (define bimm #x8000)
+(define btag #x4000)
+(define bflag btag) ;; only set by gc on pointers
 (define bmask #b11111111111111)
+(define braw #x0040)
 
 (define heapsize 256)
 
@@ -115,6 +118,13 @@
 (define (make-header s t)
    (bor (bor bimm #b11) (bor (<< t 2) (<< s 7))))
 
+;; possibly flagged one
+(define (header? x) (eq? #b1000000000000011 (band x #b1000000000000011)))
+
+(define (header-size hdr) (band #x7f (>> hdr 7)))
+
+(define (raw-header? hdr) (eq? braw (band braw hdr)))
+
 (define inull  (make-immediate 0 #b10))
 (define itrue  (make-immediate 1 #b10))
 (define ifalse (make-immediate 2 #b10))
@@ -122,9 +132,13 @@
 
 (define (allocated? desc) (eq? 0 (band bimm desc)))
 (define (immediate? desc) (not (allocated? desc)))
+
 (define (fixnum n)
    (make-immediate n #b00))
 
+(define (mem-fixnum? x)
+   (eq? bimm (band x #b1100000000000011)))
+      
 (define (fixval desc)
    (>> (band desc bmask) 2))
 
@@ -132,7 +146,214 @@
 (check #t (immediate? (fixnum 42)))
 (check 42 (fixval (fixnum 42)))
 (check #t (immediate? (fixnum 42)))
+(check #t (mem-fixnum? (fixnum 42)))
+(check #f (mem-fixnum? inull))
 
+
+;;;
+;;; Virtual 16-bit memory
+;;;
+
+(define tbytecode 18) ; raw 2
+(define tbytesp   17) ; raw, 1 pad
+(define tbytes    16) ; raw 0
+(define tproc      0)
+(define tpair      3)
+
+(define (flagged? val)
+   (= bflag (band val bflag)))
+
+(define (unflag val)
+   (band val (bxor #xffff bflag)))
+
+(define (load mem ptr)
+   (let ((val (get mem ptr #false)))
+      (cond
+         (val val)
+         ((flagged? ptr)
+            (error "attemted to load a flagged pointer to " (unflag ptr)))
+         (else
+            (error "load: not stored: " ptr)))))
+
+(define hpair (make-header 2 tpair))
+
+(define (make-mem size)
+   (-> #empty
+      (put 'end size)
+      (put 'fp 0)))
+
+(define (mem-cons mem a b)
+   (let ((fp (load mem 'fp)))
+      (if (< (+ fp 3) (load mem 'end))
+         (values
+            (-> mem 
+               (put 'fp (+ fp 3))
+               (put fp hpair)
+               (put (+ fp 1) a)
+               (put (+ fp 2) b))
+            fp)
+         (error "mem-cons: would gc at " fp))))
+
+(define (mem-car mem x)
+   (let ((val (load mem x)))
+      (if (eq? val hpair)
+         (load mem (+ x 1))
+         (error "mem-car: non-pair: " x))))
+         
+(define (mem-cdr mem x)
+   (let ((val (load mem x)))
+      (if (eq? val hpair)
+         (load mem (+ x 2))
+         (error "mem-cdr: non-pair: " x))))
+
+(check 42
+   (lets ((mem (make-mem 16))
+          (mem x (mem-cons mem 40 10))
+          (mem y (mem-cons mem 2 x)))
+         (+ (mem-car mem y) (mem-car mem (mem-cdr mem y)))))
+
+
+;;; Virtual GC
+
+
+(define (toggle-flag val)
+   (bxor val bflag))
+
+(define (rev mem pos)
+   (print "rev " pos)
+   (lets
+      ((val (load mem pos))
+       (next (load mem (unflag val)))
+       (mem (put mem pos next)))
+      (put mem (unflag val)
+         (bxor
+            (band val bflag)
+            (bor pos bflag)))))
+
+(define (chase mem pos)
+   (print "chase " pos)
+   (if (or (not (flagged? pos)) (not (allocated? pos)))
+      (error "chase: bad backtrack pointer") pos)
+   (let ((val (getf mem (unflag pos))))
+      (if (and (allocated? val) (flagged? val))
+         (chase mem val)
+         pos)))
+
+(define (print-mem mem comment)
+   (print ".----------------- (" comment ")")
+   (let loop ((pos 0))
+      (if (>= pos (getf mem 'end))
+         (print "'-----------------")
+         (let ((val (get mem pos inull)))
+            (display "| ")
+            (display pos)
+            (if (flagged? val)
+               (display " F ")
+               (display "   "))
+            (cond
+               ((>= pos (load mem 'fp))
+                  (print "___"))
+               ((= val hpair)
+                  (print "pair-header"))
+               ((header? val)
+                  (print "header " val))
+               ((mem-fixnum? val)
+                  (print (fixval val)))
+               ((eq? val inull)
+                  (print "null"))
+               ((allocated? val)
+                  (print " -> " (unflag val)))
+               ((immediate? val)
+                  (print "immediate " val))
+               (else
+                  (print val)))
+            (loop (+ pos 1)))))
+   mem)
+
+;; entry: pos is last field of topmost object, end is header position of it
+(define (mark mem pos end)
+   (print-mem mem (str "marking at " pos))
+   (if (= pos end)
+      (begin
+         (print "Marking done at " pos)
+         ; (put mem pos (toggle-flag (load mem pos)))
+         mem
+         )
+      (let ((val (getf mem pos)))
+         (cond
+            ((immediate? val)
+               ;; next object
+               (mark mem (- pos 1) end))
+            ((flagged? val)
+               ;; backtrack via reversed pointers to next field
+               (mark mem 
+                  (- (toggle-flag (chase mem val)) 1) 
+                  end))
+            (else
+               (let ((hdr (getf mem val))
+                     (mem (rev mem pos)))
+                  (cond
+                     ((raw-header? val)
+                        (mark mem (- pos 1) end))
+                     ((flagged? hdr)
+                        (print "Already done? " pos)
+                        (mark mem (- pos 1) end))
+                     (else
+                        (print " - header is " hdr " bs hpair " hpair)
+                        (print " - descending to " val " at offset " (header-size hdr))
+                        (mark mem (+ val (header-size hdr)) end)))))))))
+
+(define (unthread mem pos val)
+   (if (flagged? val)
+      (let ((mem (rev mem pos)))
+         (unthread mem pos (getf mem pos)))
+      (values mem val)))
+
+(define (copy-words mem from to n)
+   (if (eq? n 0)
+      (values mem from to)
+      (begin
+         (print " - copy-words " from " -> " to)
+         (copy-words (put mem to (getf mem from)) (+ from 1) (+ to 1) (- n 1)))))
+
+;; end points past the last object in the heap (end <= memory end)
+; compact end :: mem → mem'
+(define (compact mem end)
+   (print "Compacting mem")
+   (let loop ((mem mem) (old 0) (new 0))
+      (print "loop at " old " -> " new)
+      (if (= old end)
+         (put mem 'fp new)
+         (let ((val (load mem old)))
+            (if (flagged? val)
+               (begin
+                  (print "Live object at " old " -> " new)
+                  (lets 
+                     ((mem (put mem new val))
+                      (mem hdr (unthread mem new val))
+                      (mem oldp newp (copy-words mem (+ old 1) (+ new 1) (header-size hdr))))
+                     (loop mem oldp newp)))
+               ;; free
+               (loop mem (+ old (+ 1 (header-size val))) new))))))
+
+
+ 
+(lets ((mem (make-mem 17))
+       (mem _ (mem-cons mem (fixnum 1) (fixnum 2)))
+       (mem x (mem-cons mem (fixnum 22) (fixnum 33)))
+       (mem _ (mem-cons mem (fixnum 3) (fixnum 4)))
+       (mem y (mem-cons mem x x))
+       (mem x (mem-cons mem (fixnum 11) y))
+       )
+   (print-mem mem "initial memory")
+   (print-mem 
+      (compact
+         (print-mem
+            (mark mem (+ x 2) x)
+            "marking done")
+         (+ x 3))
+      "compacted, all done"))
+   
 
 
 ;;;
@@ -250,11 +471,6 @@
             (else
                (error "assemble-bytecode: wat " op))))))
 
-(define tbytecode 18) ; raw 2
-(define tbytesp   17) ; raw, 1 pad
-(define tbytes    16) ; raw 0
-(define tproc      0)
-(define tpair      3)
 
 (define (chunk lst)
    (let loop ((lst lst) (last #f))
@@ -1162,7 +1378,7 @@
             (str "#define ITRUE  0x" (number->string itrue 16))
             (str "#define IFALSE 0x" (number->string ifalse 16))
             (str "#define IHALT  0x" (number->string ihalt 16))
-            (str "#define HPAIR  0x" (number->string (make-header 2 tpair) 16))
+            (str "#define HPAIR  0x" (number->string hpair 16))
             (str "#define HEAPSIZE " heapsize)
             (render-heap mem)
             (str "#define ENTRY " entry)
