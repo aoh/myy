@@ -165,6 +165,11 @@ int vm(uint16_t entry) {
         regs[ip[2]] = regs[highb(op)] | regs[lowb(op)];
         ip += 3;
         goto dispatch; }
+      case 23: { // bit-xor a b reg, only positive fixnums
+        op = ip[1];
+        regs[ip[2]] = (word)(regs[highb(op)] ^ regs[lowb(op)]) | (word)BIMM;
+        ip += 3;
+        goto dispatch; }
       case 17:  // jif reg amount
         op = ip[1];
         if (regs[lowb(op)] == IFALSE) {

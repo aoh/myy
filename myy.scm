@@ -205,6 +205,9 @@
             ((eq? (car op) 'bit-or)
                (ilist 22 (argto (cadr op) (caddr op)) (car (cdddr op))
                   (assemble-bytecode (cdr lst))))
+            ((eq? (car op) 'bit-xor)
+             (ilist 23 (argto (cadr op) (caddr op)) (car (cdddr op))
+               (assemble-bytecode (cdr lst))))
             ((eq? (car op) 'ldi) ;; ldi from offset to -> LDI (from | to) <offset>
                (ilist 3 (argto (cadr op) (car (cdddr op))) (caddr op)
                   (assemble-bytecode (cdr lst))))
@@ -374,6 +377,7 @@
       ((eq? op '/) 'div)
       ((eq? op 'bit-and) 'bit-and)
       ((eq? op 'bit-or) 'bit-or)
+      ((eq? op 'bit-xor) 'bit-xor)
       ((eq? op 'cons) 'cons)
       ((eq? op 'eq?) 'eq)
       (else #false)))
@@ -462,7 +466,7 @@
    (list-heading-and-len? 'if 4))
 
 (define primops
-   '(+ - * / bit-and bit-or eq? cons car cdr if %ref %close emit))
+   '(+ - * / bit-and bit-or bit-xor eq? cons car cdr if %ref %close emit))
 
 (define (primitive? exp)
    (has? primops exp))
