@@ -383,7 +383,7 @@
 ;;   here (e.g. mov + enter -> call)
 ;;   mov + mov + ... = movn
 ;;   mov a, b ... mov b, c (b not used in between) -> mov a,c
-;;   load null a, eq x a r, jif r -> jnull a 
+;;   load null a, eq x a r, jif r -> jnull a
 ;;   if sequence w/ fixed eq target -> jump table
 
 (define (assemble-bytecode lst)
@@ -423,6 +423,12 @@
             ((eq? (car op) 'bit-and)
                (ilist 16 (argto (cadr op) (caddr op)) (car (cdddr op))
                   (assemble-bytecode (cdr lst))))
+            ((eq? (car op) 'bit-or)
+               (ilist 22 (argto (cadr op) (caddr op)) (car (cdddr op))
+                  (assemble-bytecode (cdr lst))))
+            ((eq? (car op) 'bit-xor)
+             (ilist 23 (argto (cadr op) (caddr op)) (car (cdddr op))
+               (assemble-bytecode (cdr lst))))
             ((eq? (car op) 'ldi) ;; ldi from offset to -> LDI (from | to) <offset>
                (ilist 3 (argto (cadr op) (car (cdddr op))) (caddr op)
                   (assemble-bytecode (cdr lst))))
@@ -448,7 +454,7 @@
                       (jump-len (+ 3 (length otherwise))))
                   (if (> jump-len 255)
                      (error "jif: need a bigger jump instruction for " jump-len))
-                  (ilist 17 (cadr op) jump-len 
+                  (ilist 17 (cadr op) jump-len
                      (append otherwise (assemble-bytecode (cddr op))))))
             ((eq? (car op) 'eq) ;; eq (a | b) res
                (ilist 7 (argto (cadr op) (caddr op))
@@ -586,6 +592,8 @@
       ((eq? op '*) 'mul)
       ((eq? op '/) 'div)
       ((eq? op 'bit-and) 'bit-and)
+      ((eq? op 'bit-or) 'bit-or)
+      ((eq? op 'bit-xor) 'bit-xor)
       ((eq? op 'cons) 'cons)
       ((eq? op 'eq?) 'eq)
       (else #false)))
@@ -674,7 +682,7 @@
    (list-heading-and-len? 'if 4))
 
 (define primops
-   '(+ - * / bit-and eq? cons car cdr if %ref %close emit))
+   '(+ - * / bit-and bit-or bit-xor eq? cons car cdr if %ref %close emit))
 
 (define (primitive? exp)
    (has? primops exp))
@@ -1011,7 +1019,7 @@
          (or (occurs? sym (car exp))
              (occurs? sym (cdr exp))))
       (else #false)))
-       
+
 (define (gensym-id sym)
    (let ((cs (string->list (symbol->string sym))))
       (if (and (pair? cs)
@@ -1052,7 +1060,7 @@
 ;;; CPS conversion
 ;;;
 
-;; note: we use the CPS transformation to also thread another continuation through 
+;; note: we use the CPS transformation to also thread another continuation through
 ;; the code for error handling and multithreading purposes
 
 ; input: macro-expanded code
@@ -1079,7 +1087,7 @@
        (and (pair? exp) (eq? (car exp) 'quote))))
 
 (define (simple? exp)
-   (or 
+   (or
       (symbol? exp)
       (number? exp)
       (lambda? exp)))
@@ -1131,7 +1139,7 @@
                (list 'if test then else)))
          (((lambda (?) ?) ?) (var body val)
             (cond
-               ((or (simple? val) 
+               ((or (simple? val)
                     (and (pair? val) (primitive? (car val)) (all symbol? (cdr val))))
                   (list
                      (list 'lambda (list var) (cps-to k m free body))
@@ -1155,7 +1163,7 @@
 (define (cps-lambda exp)
    (debug "CPS-LAMBDA: " exp)
    (maybe-cps-lambda exp (gensym exp) cps-to))
-   
+
 (check '(lambda (M K) (K M 42))
        (cps 42))
 
@@ -1171,13 +1179,13 @@
 ;;; A-normal form
 ;;;
 
-; Although A-normal form was initially proposed as an alternative to CPS, we use it here 
-; as an intermediate step to allow changing the evaluation order easily for optimization 
+; Although A-normal form was initially proposed as an alternative to CPS, we use it here
+; as an intermediate step to allow changing the evaluation order easily for optimization
 ; purposes later, and to simplify the CPS transformation
 
 (define (replace-first-dfs exp val new)
    (cond
-      ((eq? exp val) 
+      ((eq? exp val)
          (values new #t))
       ((quote? exp)
          (values exp #f))
@@ -1187,7 +1195,7 @@
             (if (null? exp)
                (values exp #f)
                (lets ((hd here? (replace-first-dfs (car exp) val new)))
-                  (if here? 
+                  (if here?
                      (values (cons hd (cdr exp)) #t)
                      (lets ((tl there? (loop (cdr exp))))
                         (values (cons hd tl) there?)))))))
@@ -1210,7 +1218,7 @@
                (else
                   (error "anf/first-nontrivial: wat " exp)))))
       #false exp))
-               
+
 (check 'b #t           (replace-first-dfs 'a 'a 'b))
 (check 'a #f           (replace-first-dfs 'a 'b 'c))
 (check '(b a) #t       (replace-first-dfs '(a a) 'a 'b))
@@ -1221,7 +1229,7 @@
    (if (lambda? (car exp))
       (cdr exp)
       exp))
-   
+
 (define (anf free exp)
    (cond
       ((symbol? exp)
@@ -1263,7 +1271,7 @@
                         `(lambda ,(cadr op) ,(anf free (caddr op)))
                         (cdr exp))))
                (else
-                  ;; all done 
+                  ;; all done
                   exp))))
       (else
          exp)))
@@ -1272,13 +1280,13 @@
    (debug "ANF: " exp)
    (anf (gensym exp) exp))
 
-(check '((lambda (G1) (+ a G1)) (+ b c)) 
+(check '((lambda (G1) (+ a G1)) (+ b c))
        (anf 'G1 '(+ a (+ b c))))
-    
+
 (check '((lambda (G1) ((lambda (G2) (+ G1 G2)) (+ c d))) (+ a b))
        (anf 'G1 '(+ (+ a b) (+ c d))))
-    
-(check 
+
+(check
    '((lambda (G1) ((lambda (G2) (G2 c)) (G1 b))) (k a))
    (anf 'G1 '(((k a) b) c)))
 
@@ -1310,7 +1318,7 @@
    ;; temporary version with fixed expansions
    (sexp-case exp
       ((let* ((? ?) . ?) ?) (var val rest body)
-         (macro-expand 
+         (macro-expand
             `((lambda (,var) (let* ,rest ,body)) ,val)
             env))
       ((let* () ?) (body)
@@ -1321,7 +1329,7 @@
             exp))))
 
 (check '((lambda (a) ((lambda (b) (+ a b)) 22)) 11)
-       (macro-expand '(let* ((a 11) (b 22)) (+ a b)) #empty))    
+       (macro-expand '(let* ((a 11) (b 22)) (+ a b)) #empty))
 
 
 ;;;

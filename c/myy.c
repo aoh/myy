@@ -110,7 +110,7 @@ int vm(uint16_t entry) {
         // todo, branch avoidable
         regs[ip[2]] = (regs[highb(op)] == regs[lowb(op)]) ? ITRUE : IFALSE;
         ip += 3;
-        goto dispatch; 
+        goto dispatch;
       case 8: // arity-or-fail
         if (nargs != ip[1]) {
           return 123;
@@ -158,6 +158,16 @@ int vm(uint16_t entry) {
       case 16: { // bit-and a b reg, only positive fixnums
         op = ip[1];
         regs[ip[2]] = regs[highb(op)] & regs[lowb(op)];
+        ip += 3;
+        goto dispatch; }
+      case 22: { // bit-or a b reg, only positive fixnums
+        op = ip[1];
+        regs[ip[2]] = regs[highb(op)] | regs[lowb(op)];
+        ip += 3;
+        goto dispatch; }
+      case 23: { // bit-xor a b reg, only positive fixnums
+        op = ip[1];
+        regs[ip[2]] = (word)(regs[highb(op)] ^ regs[lowb(op)]) | (word)BIMM;
         ip += 3;
         goto dispatch; }
       case 17:  // jif reg amount
