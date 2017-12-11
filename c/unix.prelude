@@ -4,7 +4,7 @@
 #include <unistd.h>
 
 void fail(char *reason, int code) {
-   fprintf(stderr, "fail: %s (%d)", reason, code);
+   fprintf(stderr, "fail: %s (%d)\n", reason, code);
    exit(1);
 }
 

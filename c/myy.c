@@ -18,16 +18,13 @@
 #define cdr(x)             heap[x+2]
 #define NREGS              16
 #define BIMM               0x8000
-#define BTAG               BIMM
 #define BMARK              0x4000
 #define IMASK              0x8003    // immediate tag and immediate type
 #define immp(x)            (x & BIMM)
-#define tagp(x)            (x & BTAG)
-#define ttag(x)            (x ^ BTAG)
-#define mask               BMARK
-#define isbit_mark(x)      (x & mask)
-#define setbit_mark(x)     (x | mask)
-#define unsetbit_mark(x)   (x ^ mask)
+#define allocp(x)          (!(immp(x)))
+#define markp(x)           (x & BMARK)
+#define unmark(x)          (x & 0xbfff)
+#define tmark(x)           (x ^ BMARK)
 #define fixnump(x)         ((x & IMASK) == BIMM)
 #define headerp(x)         ((x & IMASK) == IMASK) // immediate and imm type 11
 #define fixval(x)          ((x & 0x7fff) >> 2)
@@ -43,8 +40,112 @@
 #define hdrtype(h)         ((h >> 2) & 31)
 #define hdrsize(h)         ((h >> 7) & 127) // header is not counted
 
+#define HEAPEND            (HEAPSIZE - 17) // # of regs + 1
+
 word regs[16];
 word fp = FP;
+
+void rev(word pos) {
+   word val = heap[pos];
+   word next = heap[unmark(val)];
+   heap[pos] = next;
+   heap[unmark(val)] = (val&BMARK)^(pos|BMARK);
+} 
+
+/* flagged ptr → unflagged ptr */
+word chase(word ptr) {
+   word val;
+   ptr = unmark(ptr);
+   val = heap[ptr];
+   while (allocp(val) && markp(val)) { // todo: single comparison
+      ptr = unmark(val);
+      val = heap[ptr];
+   }
+   return ptr;
+}
+
+/* entry: pos = last field of root object, end is header pointer of it */
+/* todo: get just the root object  */
+void mark(word pos, word end) {
+   printf("started marking from root pos %d, end %d\n", pos, end);
+   while(pos != end) {
+      word val = heap[pos];
+      printf("mark %d -> %d\n", pos, val);
+      if (immp(val)) {
+         printf(" - imm, skipped\n");
+         pos--;
+      } else if (markp(val)) {
+         printf(" - marked, chasing up to parent\n");
+         pos = chase(val) - 1;
+      } else {
+         word hdr = heap[val];
+         rev(pos);
+         if (rawhdrp(hdr)) {
+            printf(" - marked live raw thing\n");
+            pos--;
+         } else if ( - markp(hdr)) {
+            printf("already marked\n");
+            pos--;
+         } else {
+            printf(" - going to mark %d\n", val);
+            pos = val + hdrsize(hdr);
+         }
+      }
+   }
+   printf("Mark finished at pos %d = end %d\n", pos, end);
+}
+
+void compact(word end) {
+   word old = 0;
+   word new = 0;
+   printf("compact --------------------------------------------\n");
+   while(old < end) {
+      word val = heap[old];
+      printf("new %d, old %d, end %d\n", new, old, end);
+      if (markp(val)) {
+         word hdr;
+         uint8_t s;
+         heap[new] = val;
+         while(markp(heap[new])) {
+            rev(new);
+         }
+         s = hdrsize(heap[new]);
+         if (old == new) {
+            old += s + 1;
+            new += s + 1;
+         } else {
+            old++; new++; // header already copied
+            while(s--) {
+               heap[new++] = heap[old++];
+            }
+         }
+      } else {
+         old += 1 + hdrsize(val);
+      }
+   }
+   fp = new;
+}
+
+void gc(uint8_t n) {
+   uint8_t r = 0;
+   word oldfp = fp;
+   //printf("GC ----------------------------------------\n");
+   //printf("gc from fp=%d\n", fp);
+   heap[fp] = HREGS;
+   //printf("hregs to %d\n", fp);
+   for(r=0;r<16;r++) {
+      //printf("r%d -> %d\n", r, fp+1+r);
+      heap[fp+1+r] = regs[r];
+   }
+   mark(fp+16, fp);
+   compact(fp); // registers should already have reversed values now
+   for(r=0;r<16;r++) {
+      regs[r] = heap[oldfp+1+r];
+   }
+   //printf("GC DONE---------------------------------------\n");
+}
+
+#define MAXALLOC  10 // testing
 
 int vm(uint16_t entry) {
   uint8_t nargs = 3;
@@ -57,6 +158,13 @@ int vm(uint16_t entry) {
   regs[2] = IHALT; // halt cont
   regs[3] = INULL; // very little machine info
   apply:
+  // check that we have enough space for maximum allocation amount per frame
+  // this avoids need to check for gc at each alloc within the frame and 
+  // having to track location of instruction pointer, which cannot move due 
+  // to gc this way
+  if (fp >= (HEAPEND - MAXALLOC)) {
+    gc(MAXALLOC);
+  }
   tmp = regs[0];
   if (immp(tmp)) {
     if (tmp == IHALT) {
@@ -113,7 +221,7 @@ int vm(uint16_t entry) {
         goto dispatch;
       case 8: // arity-or-fail
         if (nargs != ip[1]) {
-          return 123;
+          fail("arity error", nargs);
         }
         ip += 2;
         goto dispatch;
@@ -125,7 +233,7 @@ int vm(uint16_t entry) {
           ip += 3;
         }
         goto dispatch;
-      case 10: // load-enum val reg
+      case 10: // load-literal-enum val reg
         op = ip[1];
         regs[lowb(op)] = immediate(highb(op), 2);
         ip += 2;
@@ -190,14 +298,11 @@ int vm(uint16_t entry) {
         goto dispatch;
       case 20: // cons
         op = ip[1];
-        if (fp >= (HEAPSIZE - 3)) { // GC time!
-           return 99;
-        }
         heap[fp] = HPAIR;
         heap[fp+1] = regs[highb(op)];
         heap[fp+2] = regs[lowb(op)];
         regs[ip[2]] = fp;
-        fp += 2;
+        fp += 3;
         ip += 3;
         goto dispatch;
       case 21: // emit

@@ -125,9 +125,16 @@
 
 (define (raw-header? hdr) (eq? braw (band braw hdr)))
 
-(define inull  (make-immediate 0 #b10))
-(define itrue  (make-immediate 1 #b10))
-(define ifalse (make-immediate 2 #b10))
+(define (enum-val val)
+   (cond
+      ((eq? val null) 0)
+      ((eq? val #t) 1)
+      ((eq? val #f) 2)
+      (else #f)))
+
+(define inull  (make-immediate (enum-val '())  #b10))
+(define itrue  (make-immediate (enum-val #t)   #b10))
+(define ifalse (make-immediate (enum-val #f)   #b10))
 (define ihalt  (make-immediate 3 #b10))
 
 (define (allocated? desc) (eq? 0 (band bimm desc)))
@@ -159,6 +166,7 @@
 (define tbytes    16) ; raw 0
 (define tproc      0)
 (define tpair      3)
+(define tregs      2)
 
 (define (flagged? val)
    (= bflag (band val bflag)))
@@ -175,7 +183,8 @@
          (else
             (error "load: not stored: " ptr)))))
 
-(define hpair (make-header 2 tpair))
+(define hpair (make-header  2 tpair))
+(define hregs (make-header 16 tregs))
 
 (define (make-mem size)
    (-> #empty
@@ -386,6 +395,8 @@
 ;;   load null a, eq x a r, jif r -> jnull a
 ;;   if sequence w/ fixed eq target -> jump table
 
+
+      
 (define (assemble-bytecode lst)
    (if (null? lst)
       null
@@ -474,6 +485,11 @@
                   (argto (cadr op) (caddr op))
                   (cadddr op)
                   (assemble-bytecode (cdr lst))))
+            ((eq? (car op) 'ldl)
+               (print "LDL " op)
+               (ilist 10
+                  (argto (cadr op) (caddr op))
+                  (assemble-bytecode (cdr lst))))
             (else
                (error "assemble-bytecode: wat " op))))))
 
@@ -559,13 +575,13 @@
 ; output: BASIL sexp, including required linked objects
 
 (define registers
-   '(a b c d e f g h i j k l m n o p))
+   '(a b c d 
+     e f g h 
+     i j k l 
+     m n o p))
 
 (define regs
-   (list->ff
-      (zip cons
-         '(a b c d e f g h i j k l m n  o p)
-         (iota 1 1 15))))
+   (list->ff (zip cons registers (iota 1 1 16))))
 
 (define (register? x)
    (get regs x #false))
@@ -627,6 +643,10 @@
       (else
          #false)))
 
+(define (quote? exp)
+   (and (pair? exp)
+        (eq? (car exp) 'quote)))
+
 (define (load-to reg exp lits)
    (cond
       ((symbol? exp)
@@ -644,6 +664,13 @@
                   (list (list 'lde (+ pos 2) (reg-num reg)))))
             (else
                (error "load-to: where is " exp))))
+      ((and (quote? exp) (enum-val (cadr exp)))
+         (list
+            (list 'ldl (enum-val (cadr exp)) (reg-num reg))))
+      ((boolean? exp)
+         (list (list 'ldl (enum-val exp) (reg-num reg))))
+      ((null? exp)
+         (list (list 'ldl (enum-val exp) (reg-num reg))))
       ((prim-call-to reg exp) =>
          (λ (inst)
             (list inst)))
@@ -673,10 +700,6 @@
 
 (define lambda?
    (list-heading-and-len? 'lambda 3))
-
-(define (quote? exp)
-   (and (pair? exp)
-        (eq? (car exp) 'quote)))
 
 (define if?
    (list-heading-and-len? 'if 4))
@@ -856,6 +879,11 @@
       (cdr exp)
       exp))
 
+(define (self-quoting? val)
+   (or 
+      (null? val)
+      (boolean? val)))
+
 (define (find-literals seen exp)
    (cond
       ((lambda? exp)
@@ -866,13 +894,23 @@
             seen))
       ((null? exp)
          seen)
+      ((boolean? exp)
+         seen)
+      ((null? exp)
+         seen)
       ((list? exp)
-         (if (lambda? (car exp))
-            (fold find-literals
-               (find-literals seen (caddr (car exp)))
-               (cdr exp))
-            (fold find-literals seen
-               (maybe-drop-primop exp))))
+         (cond
+            ((lambda? (car exp))
+               (fold find-literals
+                  (find-literals seen (caddr (car exp)))
+                  (cdr exp)))
+            ((quote? exp)
+               (if (self-quoting? (cadr exp))
+                  seen
+                  (cons exp seen)))
+            (else
+               (fold find-literals seen
+                  (maybe-drop-primop exp)))))
       ((register? exp)
          seen)
       (else
@@ -970,8 +1008,9 @@
                   (map (λ (x) (alpha-rename x env)) (cdr exp))))
             (else
                (map (λ (x) (alpha-rename x env)) exp))))
-      ((number? exp)
-         exp)
+      ((number? exp) exp)
+      ((boolean? exp) exp)
+      ((null? exp) exp)
       (else
          (error "alpha-rename: wat (usually ok) " exp)
          exp)))
@@ -1082,14 +1121,13 @@
 (define (complex? exp)
    (not (symbol? exp)))
 
-(define (simple-literal? exp)
-   (or (number? exp)
-       (and (pair? exp) (eq? (car exp) 'quote))))
 
 (define (simple? exp)
    (or
       (symbol? exp)
       (number? exp)
+      (boolean? exp)
+      (null? exp)
       (lambda? exp)))
 
 (define (replace-first lst a b)
@@ -1139,13 +1177,25 @@
                (list 'if test then else)))
          (((lambda (?) ?) ?) (var body val)
             (cond
-               ((or (simple? val)
-                    (and (pair? val) (primitive? (car val)) (all symbol? (cdr val))))
+               ((or (simple? val) 
+                    (and (pair? val) (primitive? (car val)) (all symbol? (cdr val)))
+                    (quote? val))
                   (list
                      (list 'lambda (list var) (cps-to k m free body))
                      (maybe-cps-lambda val free cps-to)))
+               ((if? val)
+                  (error "cps-to: unhandled if case: " exp))
+               ((not (pair? val))
+                  (error "cps-to: unhandled literal: " exp))
+               ;; head lambda and call not primitive -> turn it into a continuation
                (else
-                  (error "unhandled case x " exp))))
+                  (let ((rator (car val))
+                        (rands (cdr val)))
+                  (ilist
+                     rator
+                     m
+                     (list 'lambda (list m var) (cps-to k m free body))
+                     rands)))))
          (else
             (if (and (pair? exp) (primitive? (car exp)))
                `((lambda (,free) (,k ,m ,free)) ,exp)
@@ -1172,6 +1222,9 @@
 
 (check '(lambda (M K x) (x M K x))
        (cps-lambda '(lambda (x) (x x))))
+
+(check '(lambda (M K) (bar M (lambda (M x) (foo M K x x)) baz))
+   (cps '((lambda (x) (foo x x)) (bar baz))))
 
 (print ">>> " (cps-lambda '(lambda (args) ((lambda (G1) ((lambda (G2) (+ G1 G2)) 6)) 3))))
 
@@ -1212,6 +1265,8 @@
                ((lambda? exp) exp)
                ((quote? exp) exp)
                ((number? exp) exp)
+               ((boolean? exp) exp)
+               ((null? exp) exp)
                ((list? exp)
                   (or (first-nontrivial exp)
                       exp))
@@ -1323,10 +1378,18 @@
             env))
       ((let* () ?) (body)
          (macro-expand body env))
+      ((λ ? ?) (formals body)
+         (macro-expand
+            `(lambda ,formals ,body)
+            env))
       (else
          (if (list? exp)
             (map (λ (x) (macro-expand x env)) exp)
             exp))))
+
+(define (expand exp env)
+   (debug "MACRO: " exp)
+   (macro-expand exp env))
 
 (check '((lambda (a) ((lambda (b) (+ a b)) 22)) 11)
        (macro-expand '(let* ((a 11) (b 22)) (+ a b)) #empty))
@@ -1387,6 +1450,7 @@
             (str "#define IFALSE 0x" (number->string ifalse 16))
             (str "#define IHALT  0x" (number->string ihalt 16))
             (str "#define HPAIR  0x" (number->string hpair 16))
+            (str "#define HREGS  0x" (number->string hregs 16))
             (str "#define HEAPSIZE " heapsize)
             (render-heap mem)
             (str "#define ENTRY " entry)
@@ -1395,7 +1459,7 @@
 (define (test-compiler exp port)
    (print-to stderr "Compiling " exp)
    (output-heap
-      (ll-value->basil (alpha-convert (cps-lambda (a-normal-form (macro-expand exp #empty)))))
+      (ll-value->basil (alpha-convert (cps-lambda (a-normal-form (expand exp #empty)))))
       port))
 
 (define (maybe op arg)
@@ -1462,3 +1526,5 @@
    (process-arguments (cdr args) command-line-rules
       "usage: myy.scm [args] [sourcefile]"
       myy-entry))
+
+
