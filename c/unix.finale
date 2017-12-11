@@ -1,7 +1,12 @@
 int main() {
    int r;  
+   word rval;
    for (r = 0; r < NREGS; r++) {
       regs[r] = INULL;
    }
-   return vm(ENTRY);
+   rval = vm(ENTRY);
+   if (fixnump(rval)) {
+      return fixval(rval);
+   }
+   return 127;
 }

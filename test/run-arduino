@@ -1,0 +1,37 @@
+#!/bin/bash
+
+DEV=/dev/ttyACM0
+
+die() {
+   echo "ERROR: $@"
+   exit 1
+   sleep 10
+}
+
+success() {
+   rm test/*.{c,bin,out}
+   exit 0
+}
+
+test -f failures && rm failures
+mkdir -p arduino/myy.ino
+
+test -c $DEV || die "$DEV does not look like a proper device"
+ 
+echo "Running tests on Arduino"
+for SCM in test/*.scm
+do
+   test -f flash.result && rm flash.result
+   echo -n "  $SCM "
+   bin/ol --run myy.scm -o arduino/myy/myy.ino -p arduino $SCM > $SCM.out 2>&1 || die "myy compile failed"
+   make flash.result &> $SCM.out || die "compile, flash or run failed, log at $SCM.out"
+   RESULT=$(cat flash.result | sed -e 's/\r//')
+   WANTED=$(cat $SCM.exit)
+   cat $SCM.exit | grep -q "^$RESULT$" && echo "✓" || { echo "failure!"; echo "got '$RESULT' instead of '$WANTED'" >> failures; }
+done
+
+test -f failures || success
+
+echo "Failed tests: $(cat failures)"
+
+exit 1

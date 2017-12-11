@@ -8,6 +8,12 @@ void fail(char *reason, int code) {
    exit(1);
 }
 
+void halt(int val) {
+   if (0 <= val < 128)
+      exit(val);
+   exit(127);
+}
+
 int put_byte(uint8_t b) {
    return write(1, &b, 1);
 }

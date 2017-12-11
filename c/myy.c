@@ -97,33 +97,33 @@ void mark(word pos, word end) {
 
 void compact(word end) {
    word old = 0;
-   word new = 0;
+   word nfp = 0;
    printf("compact --------------------------------------------\n");
    while(old < end) {
       word val = heap[old];
-      printf("new %d, old %d, end %d\n", new, old, end);
+      printf("nfp %d, old %d, end %d\n", nfp, old, end);
       if (markp(val)) {
          word hdr;
          uint8_t s;
-         heap[new] = val;
-         while(markp(heap[new])) {
-            rev(new);
+         heap[nfp] = val;
+         while(markp(heap[nfp])) {
+            rev(nfp);
          }
-         s = hdrsize(heap[new]);
-         if (old == new) {
+         s = hdrsize(heap[nfp]);
+         if (old == nfp) {
             old += s + 1;
-            new += s + 1;
+            nfp += s + 1;
          } else {
-            old++; new++; // header already copied
+            old++; nfp++; // header already copied
             while(s--) {
-               heap[new++] = heap[old++];
+               heap[nfp++] = heap[old++];
             }
          }
       } else {
          old += 1 + hdrsize(val);
       }
    }
-   fp = new;
+   fp = nfp;
 }
 
 void gc(uint8_t n) {
@@ -168,14 +168,9 @@ int vm(uint16_t entry) {
   tmp = regs[0];
   if (immp(tmp)) {
     if (tmp == IHALT) {
-      if(fixnump(regs[2])) {
-         return fixval(regs[2]);
-      } else {
-         return 127;
-      }
-    } else {
-      return 126;
+      return(regs[2]);
     }
+    fail("calling immediate call", tmp);
   }
   h = hdrtype(heap[tmp]);
   if (h == TBYTECODE) {
@@ -311,14 +306,13 @@ int vm(uint16_t entry) {
          ip += 2;
          goto dispatch;
       default:
-        return 255;
+        fail("bad opcode", *ip);
     }
     ip++;
     goto dispatch;
   } else if (h == TPROC) {
     tmp = heap[tmp+1];
     goto dispatch_bytecode;
-  } else {
-    return 124;
   }
+  fail("bad call", tmp);
 }

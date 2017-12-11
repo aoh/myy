@@ -1,9 +1,25 @@
 #define STATUSLED 13
 
 void fail(char *reason, int code) {
-   Serial.println(reason);
-   Serial.println(code);
-   while(1);
+   int status = HIGH;
+   while(1) {
+      digitalWrite(STATUSLED, status);
+      Serial.println(reason);
+      Serial.println(code);
+      status = !status;
+      delay(1000);
+   }
+}
+
+void halt(int val) {
+  int status = HIGH;
+  while(1) {
+   Serial.print("HALT ");
+   Serial.println(val);
+   digitalWrite(STATUSLED, status);
+   status = !status;
+   delay(500);
+  }
 }
 
 /* minimal I/O */
@@ -24,8 +40,8 @@ void setup() {
   int status = HIGH;
   pinMode(STATUSLED, OUTPUT);
   while(!Serial) {
-     digitalWrite(STATUSLED, status);
-     delay(500);
-     status = (status == HIGH) ? LOW : HIGH;
+    digitalWrite(STATUSLED, status);
+    delay(100);
+    status = !status;
   }
 }

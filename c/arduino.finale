@@ -1,9 +1,15 @@
 void loop() {
+   word rval;
    int r;
    for (r=0; r<NREGS; r++) {
       regs[r] = INULL;
    }
    fp = FP;
-   Serial.println(fixval(vm(ENTRY)));
+   rval = vm(ENTRY);
+   if (fixnump(rval)) {
+      halt(fixval(rval));
+   } else {
+      fail("halted on non-fixnum ", rval);
+   }
    delay(1000);
 }

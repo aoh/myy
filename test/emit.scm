@@ -1,2 +1,5 @@
 (lambda (x)
-   (if (emit 42) 11 22))
+   (if (emit 42) 
+      (if (emit 10)
+         11 22)
+      33))
