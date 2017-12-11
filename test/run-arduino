@@ -9,7 +9,6 @@ die() {
 }
 
 success() {
-   rm test/*.{c,bin,out}
    exit 0
 }
 
