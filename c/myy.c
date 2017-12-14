@@ -5,9 +5,8 @@
  header: [10ssssss sRtttt11] -> 32 types (16 raw, 16 alloc), 64 words max size
 */
 
-
 #define word      uint16_t
-#define TPROC      0  // all 0
+#define TPROC      0
 #define TPAIR      3
 #define TBYTES    16  // raw 0
 #define TBYTESP   17  // raw 1
@@ -33,14 +32,13 @@
 #define immediate(v, t)    (BIMM | t | (v << 2))  // 10vvvvvvvvvvvvtt
 #define highb(x)           (x >> 4)
 #define lowb(x)            (x & 15)
-
 #define W                  2
-
 #define header(s, t)       (0x8003 | (t << 2) | (s << 7))
 #define hdrtype(h)         ((h >> 2) & 31)
 #define hdrsize(h)         ((h >> 7) & 127) // header is not counted
-
 #define HEAPEND            (HEAPSIZE - 17) // # of regs + 1
+
+#define MAXALLOC           10 // temporary - max allocation per code sequence
 
 word regs[16];
 word fp = FP;
@@ -52,8 +50,7 @@ void rev(word pos) {
    heap[unmark(val)] = (val&BMARK)^(pos|BMARK);
 } 
 
-/* flagged ptr → unflagged ptr */
-word chase(word ptr) {
+word chase(word ptr) { 
    word val;
    ptr = unmark(ptr);
    val = heap[ptr];
@@ -67,57 +64,45 @@ word chase(word ptr) {
 /* entry: pos = last field of root object, end is header pointer of it */
 /* todo: get just the root object  */
 void mark(word pos, word end) {
-   printf("started marking from root pos %d, end %d\n", pos, end);
    while(pos != end) {
       word val = heap[pos];
-      printf("mark %d -> %d\n", pos, val);
       if (immp(val)) {
-         printf(" - imm, skipped\n");
          pos--;
       } else if (markp(val)) {
-         printf(" - marked, chasing up to parent\n");
          pos = chase(val) - 1;
       } else {
          word hdr = heap[val];
          rev(pos);
          if (rawhdrp(hdr)) {
-            printf(" - marked live raw thing\n");
             pos--;
-         } else if ( - markp(hdr)) {
-            printf("already marked\n");
+         } else if (markp(hdr)) {
             pos--;
          } else {
-            printf(" - going to mark %d\n", val);
             pos = val + hdrsize(hdr);
          }
       }
    }
-   printf("Mark finished at pos %d = end %d\n", pos, end);
 }
 
 void compact(word end) {
    word old = 0;
    word nfp = 0;
-   printf("compact --------------------------------------------\n");
    while(old < end) {
       word val = heap[old];
-      printf("nfp %d, old %d, end %d\n", nfp, old, end);
       if (markp(val)) {
          word hdr;
          uint8_t s;
          heap[nfp] = val;
-         while(markp(heap[nfp])) {
+         while(markp(heap[nfp]))
             rev(nfp);
-         }
          s = hdrsize(heap[nfp]);
          if (old == nfp) {
             old += s + 1;
             nfp += s + 1;
          } else {
             old++; nfp++; // header already copied
-            while(s--) {
+            while(s--)
                heap[nfp++] = heap[old++];
-            }
          }
       } else {
          old += 1 + hdrsize(val);
@@ -129,23 +114,15 @@ void compact(word end) {
 void gc(uint8_t n) {
    uint8_t r = 0;
    word oldfp = fp;
-   //printf("GC ----------------------------------------\n");
-   //printf("gc from fp=%d\n", fp);
    heap[fp] = HREGS;
-   //printf("hregs to %d\n", fp);
-   for(r=0;r<16;r++) {
-      //printf("r%d -> %d\n", r, fp+1+r);
+   for(r=0;r<16;r++)
       heap[fp+1+r] = regs[r];
-   }
    mark(fp+16, fp);
-   compact(fp); // registers should already have reversed values now
-   for(r=0;r<16;r++) {
+   compact(fp);
+   for(r=0;r<16;r++)
       regs[r] = heap[oldfp+1+r];
-   }
-   //printf("GC DONE---------------------------------------\n");
 }
 
-#define MAXALLOC  10 // testing
 
 int vm(uint16_t entry) {
   uint8_t nargs = 3;

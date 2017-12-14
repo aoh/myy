@@ -1,5 +1,8 @@
 #!/usr/bin/ol --run
 
+(import 
+   (owl sexp))
+
 ;;;
 ;;; System settings
 ;;;
@@ -279,6 +282,18 @@
             (loop (+ pos 1)))))
    mem)
 
+(define (offset lst val)
+   (let loop ((lst lst) (pos 0))
+      (cond
+         ((null? lst)
+            #false
+            ;(error "offset: not found: " val)
+            )
+         ((eq? (car lst) val)
+            pos)
+         (else
+            (loop (cdr lst) (+ pos 1))))))
+
 ;; entry: pos is last field of topmost object, end is header position of it
 (define (mark mem pos end)
    (print-mem mem (str "marking at " pos))
@@ -347,7 +362,7 @@
 
 
  
-(lets ((mem (make-mem 17))
+'(lets ((mem (make-mem 17))
        (mem _ (mem-cons mem (fixnum 1) (fixnum 2)))
        (mem x (mem-cons mem (fixnum 22) (fixnum 33)))
        (mem _ (mem-cons mem (fixnum 3) (fixnum 4)))
@@ -594,12 +609,6 @@
          n)
       reg))
 
-(define (offset lst exp)
-   (let loop ((pos 0) (lst lst))
-      (cond
-         ((null? lst) #false)
-         ((eq? (car lst) exp) pos)
-         (else (loop (+ pos 1) (cdr lst))))))
 
 (define (binary-primop->opcode op)
    (cond
@@ -760,17 +769,7 @@
       ((eq? pos 0) (car lst))
       (else (xref (cdr lst) (- pos 1)))))
 
-(define (offset lst val)
-   (let loop ((lst lst) (pos 0))
-      (cond
-         ((null? lst)
-            #false
-            ;(error "offset: not found: " val)
-            )
-         ((eq? (car lst) val)
-            pos)
-         (else
-            (loop (cdr lst) (+ pos 1))))))
+
 
 (define (equal-prefix? a b)
    (cond
@@ -1045,6 +1044,76 @@
 ; (lambda (x) (lambda (y) x)) →
 ;   (%proc (lambda (C x) (%proc-imm 0 x)) ; <- close literal at offset 0 with x
 ;      (lambda (C y) (%ref C 0)))
+
+;; walk over the exp and find all
+;;  - literals
+;;  - free varibales
+
+(define (offset lst exp)
+   (let loop ((pos 0) (lst lst))
+      (cond
+         ((null? lst) #false)
+         ((eq? (car lst) exp) pos)
+         (else (loop (+ pos 1) (cdr lst))))))
+
+(define (free-vars exp)
+   (cond
+      ((symbol? exp)
+         (list exp))
+      ((null? exp)
+         null)
+      ((quote? exp)
+         null)
+      ((if? exp)
+         (fold union null
+            (map free-vars (cdr exp))))
+      ((lambda? exp)
+         (diff (free-vars (caddr exp)) (cadr exp)))
+      ((list? exp)
+         (fold union null
+            (map free-vars
+               (maybe-drop-primop (cdr exp)))))
+      ((number? exp) null)
+      ((boolean? exp) null)
+      (else 
+         (error "free-vars: wat " exp))))
+
+;; literals within the body of a lambda, meaning non-operator lambdas are treated 
+;; as single liteals
+
+(define (literals exp)
+   (cond
+      ((symbol? exp) null)
+      ((null? exp) null)
+      ((quote? exp) (list exp))
+      ((lambda? exp) (list exp))
+      ((list? exp)
+         (fold union null
+            (map literals
+               (if (lambda? (car exp))
+                  (cons (caddr (car exp)) (cdr exp))
+                  (maybe-drop-primop exp)))))
+      ((number? exp) 
+         (if (<= 0 exp 15)
+            null
+            (list exp)))
+      ((boolean? exp) null)
+      (else
+         (error "literals: wat " exp))))
+
+(check '(x) (free-vars 'x))
+(check '(x) (free-vars '(x x)))
+(check '()  (free-vars '(lambda (a) (a a))))
+(check '()  (free-vars '(lambda (a) (if a 1 2))))
+(check '(x) (free-vars '(lambda (a) (a x))))
+(check '(x) (free-vars '(lambda (a) (lambda (b) (car (cons a x))))))
+(check '(a) (free-vars '(lambda (x) (lambda (y) (if a (x y) x)))))
+
+(check '(16) (literals '(if x (+ x 16) x)))
+(let ((lexp '(lambda (x) x)))
+   (check (list 42 lexp)
+      (literals `((lambda (z) (cons 42 ,lexp)) #true))))
+
 
 
 ;;;
@@ -1470,7 +1539,6 @@
       stdout
       (open-output-file path)))
 
-(import (owl sexp))
 
 (define (myy-read-file path)
    (maybe car (maybe list->sexps (file->list path))))
@@ -1522,6 +1590,7 @@
                   0))))))
 
 (import (owl date))
+
 (λ (args)
    (process-arguments (cdr args) command-line-rules
       "usage: myy.scm [args] [sourcefile]"
