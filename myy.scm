@@ -661,7 +661,7 @@
    (and (pair? exp)
         (eq? (car exp) 'quote)))
 
-(define (load-to reg exp lits)
+(define (load-to reg exp)
    (cond
       ((symbol? exp)
          (let ((n (reg-num exp))
@@ -673,9 +673,6 @@
          (cond
             ((and (< exp #b10000) (>= exp 0))
                (list (list 'ldf exp (reg-num reg))))
-            ((offset lits exp) =>
-               (λ (pos)
-                  (list (list 'lde (+ pos 2) (reg-num reg)))))
             (else
                (error "load-to: where is " exp))))
       ((and (quote? exp) (enum-val (cadr exp)))
@@ -688,23 +685,8 @@
       ((prim-call-to reg exp) =>
          (λ (inst)
             (list inst)))
-      ((offset lits exp) =>
-         (λ (pos)
-            (list (list 'lde (+ pos 2) (reg-num reg)))))
       (else
-         (print "Could not find " exp " from literals " lits)
          (error "load-to: wat " exp))))
-
-(define (load-args args lits)
-   (let loop ((args args) (lits lits) (regs registers) (out null))
-      (cond
-         ((null? args)
-            out)
-         ((load-to (car regs) (car args) lits) =>
-            (λ (loads)
-               (loop (cdr args) lits (cdr regs) (append loads out))))
-         (else
-            (error "load-args: wat " args)))))
 
 (define (list-heading-and-len? head len)
    (λ (exp)
@@ -790,7 +772,7 @@
          #false)))
 
 ;; todo: rator can now be handled as a regular register
-(define (register-dance exp lits)
+(define (register-dance exp)
    (lets
       ((rator (car exp))
        (regs register-list) ;; add the silent r0, which will hold the operator after call / at enter
@@ -828,12 +810,7 @@
                                  (cons (list 'mov val-pos pos) rinsts))))
                         ((loadable-fixnum? desired-val)
                            (loop (lset regs pos desired-val) (cons (list 'ldf desired-val pos) rinsts)))
-                        ((offset lits desired-val) =>
-                           (λ (lpos)
-                              (loop
-                                 (lset regs pos desired-val)
-                                 (cons (list 'lde (+ lpos 2) pos) rinsts))))
-                        ((load-to pos desired-val lits) =>
+                        ((load-to pos desired-val) =>
                            (λ (insts)
                               (loop
                                  (lset regs pos desired-val)
@@ -850,15 +827,15 @@
             (else
                (error "no dead registers in " regs))))))
 
-(define (ll-exp->bytecode exp lits)
+(define (ll-exp->bytecode exp)
    (cond
       ((eq? (car exp) 'if)
          (let ((test (cadr exp))
                (then (caddr exp))
                (else (car (cdddr exp))))
             (cons
-               (ilist 'jif (reg-num test) (ll-exp->bytecode then lits))
-               (ll-exp->bytecode else lits))))
+               (ilist 'jif (reg-num test) (ll-exp->bytecode then))
+               (ll-exp->bytecode else))))
       ((lambda? (car exp))
          (lets ((rator (car exp))
                 (formals (cadr rator))
@@ -867,23 +844,21 @@
             (fold
                (λ (tail binding)
                   (append
-                     (load-to (car binding) (cdr binding) lits)
+                     (load-to (car binding) (cdr binding))
                      tail))
-               (ll-exp->bytecode body lits)
+               (ll-exp->bytecode body)
                (zip cons formals rands))))
-      ((register-dance exp lits) =>
-         (λ (steps)
-            steps))
+      ((register-dance exp) =>
+         (λ (steps) steps))
       (else
          (error "ll-exp->bytecode: unable to generate call: " exp))))
 
-;; literals are accessable via r0
-(define (ll-lambda->basil formals exp lits)
+(define (ll-lambda->basil formals exp)
    (ilist 'bytecode
       (list 'arity 
          ;; drop the operator register from counts
          (- (length formals) 1))
-      (ll-exp->bytecode exp lits)))
+      (ll-exp->bytecode exp)))
 
 (define (maybe-drop-primop exp)
    (if (has? primops (car exp))
@@ -937,18 +912,7 @@
          (cons 'proc
             (map ll-value->basil (cdr exp))))
       ((lambda? exp)
-         (lets
-            ((formals (cadr exp))
-             (body (caddr exp))
-             (lits (literals body))
-             (bc
-               (ll-lambda->basil
-                   (cadr exp)
-                   (caddr exp)
-                   lits)))
-            (if (null? lits)
-               bc
-               (error "ll-value->basil: lambda would have literals " exp))))
+         (ll-lambda->basil (cadr exp) (caddr exp)))
       ((and (fixnum? exp) (>= exp 0) (< exp 4096))
          exp)
       (else
@@ -1210,8 +1174,7 @@
                ;; just add the argument
                (list 'lambda (cons lvar formals) body)
                ;; add argument, convert references and convert the literals
-               (ilist 
-                  '%proc
+               (ilist '%proc
                   (list 'lambda (cons lvar formals)
                      (refer-literals body lvar lits '%ref))
                   (map closurize lits)))
