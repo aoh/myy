@@ -1,19 +1,21 @@
 # Myy 
 
-Myy is a portable non-trivial lisp system. It initially mainly targets 
-ATSAMD21-based devices, such as Adafruit Trinket M0. The design strives to 
-be portable. The intention is to make myy capable of running on various 
-kinds for runtimes easily, from 16-bit microcontrollers with a few kilobytes 
-of memory to native code on desktops and webassembly.
+Myy is a small Lisp system. It is both an attempt to implement a lean
+interactive multithreading programming environment for current 
+ATSAMD21-based cheap microcontrollers (such as Adafruit Trinket M0),
+and a rewrite of the Owl Lisp core. 
 
+The implementation currently consists of a compiler written in Owl Lisp, 
+which produces standalone C programs for either Arduino or Unix platforms. 
 
 ## Status
 
-Myy is about a week old. It can compile simple programs to heap images, 
-which can be fairly efficiently evaluated on a 16-bit VM. The compiler 
-chain steps are mostly clear, but only a few of the lower level 
-transformations are currently implemented.
-
+Myy can currently run simple programs, consisting of a subset of the 
+intended language, on suitable microcontrollers and on the development
+machine itself. Tests consist mainly of tiny programs checking whether
+the virtual machine halts on the correct exit value, which on unix 
+is used as the program return value and on Arduino is printed via serial 
+console.
 
 ## Usage
 
@@ -23,37 +25,23 @@ intend to do any testing or development within the repl.
 ```
 $ git clone https://github.com/aoh/myy.git
 $ cd myy
-$ make
+$ make test
+[...]
 $ rlwrap bin/ol
 You see a prompt.
 > ,load "myy.scm"
 ;; Loaded myy.scm
-> ,find binary
-current toplevel: binary-primop->opcode, binary-port?
-   (owl base): binary-port?
-   (scheme base): binary-port?
-> (binary-primop->opcode '+)
-'add
+> ,find alpha
+current toplevel: alpha-rename, alpha-convert
+   (owl alpha): alpha-convert
+> (alpha-convert '(lambda (x dx) (+ x dx)))
+ALPHA-CONVERT: (lambda (x dx) (+ x dx))
+'(lambda (a b) (+ a b))
 > 
 ```
 
-You can also use myy.scm as a program, like it is used in the Makefile, by 
-giving owl the --run flag. This causes the last value of the program to be 
-called with the commands following --run in the command line.
+## Use on Trinket
 
-```
-$ echo '(lambda (k x) (k x))' > foo
-$ ol --run myy.scm foo -
-[test heap dump follows]
-```
-
-It is often convenient to start a terminal, tmux window etc running 
-`watch ol --run myy.scm ourprogram.myy -` or `watch make` when making 
-changes to the compiler to see the effect of the changes while they are 
-being made.
-
-You can open the Arduino IDE and open arduino/myy/myy.ino after running `make` 
-and flash the VM along with the compiled heap to your device and read output 
-from the serial console. Currently a light pulsating between green and yellow
-indicates a run, which successfully halted in some value without erros.
+The tests can currently be run on a Trinket M0 connected as /dev/ttyACM0 by 
+issuing `make arduino-test`.
 
