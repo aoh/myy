@@ -240,16 +240,6 @@ int vm(uint16_t entry) {
         regs[ip[2]] = regs[highb(op)] & regs[lowb(op)];
         ip += 3;
         goto dispatch; }
-      case 22: { // bit-or a b reg, only positive fixnums
-        op = ip[1];
-        regs[ip[2]] = regs[highb(op)] | regs[lowb(op)];
-        ip += 3;
-        goto dispatch; }
-      case 23: { // bit-xor a b reg, only positive fixnums
-        op = ip[1];
-        regs[ip[2]] = (word)(regs[highb(op)] ^ regs[lowb(op)]) | (word)BIMM;
-        ip += 3;
-        goto dispatch; }
       case 17:  // jif reg amount
         op = ip[1];
         if (regs[lowb(op)] == IFALSE) {
@@ -282,6 +272,22 @@ int vm(uint16_t entry) {
          regs[lowb(op)] = (put_byte(fixval(regs[highb(op)])) == 1) ? ITRUE : IFALSE;
          ip += 2;
          goto dispatch;
+      case 22: { // bit-or a b reg, only positive fixnums
+        op = ip[1];
+        regs[ip[2]] = regs[highb(op)] | regs[lowb(op)];
+        ip += 3;
+        goto dispatch; }
+      case 23: { // bit-xor a b reg, only positive fixnums
+        op = ip[1];
+        regs[ip[2]] = (word)(regs[highb(op)] ^ regs[lowb(op)]) | (word)BIMM;
+        ip += 3;
+        goto dispatch; }
+      case 24: // load caller, first stage
+        op = ip[1];
+        printf("loading position %d of r0 to r%d\n", highb(op), lowb(op));
+        regs[lowb(op)] = heap[regs[0] + highb(op)];
+        ip += 2;
+        goto dispatch;
       default:
         fail("bad opcode", *ip);
     }

@@ -501,9 +501,11 @@
                   (cadddr op)
                   (assemble-bytecode (cdr lst))))
             ((eq? (car op) 'ldl)
-               (print "LDL " op)
                (ilist 10
                   (argto (cadr op) (caddr op))
+                  (assemble-bytecode (cdr lst))))
+            ((eq? (car op) 'ref)
+               (ilist 24 (argto (cadr op) (caddr op))
                   (assemble-bytecode (cdr lst))))
             (else
                (error "assemble-bytecode: wat " op))))))
@@ -596,7 +598,7 @@
      m n o p))
 
 (define regs
-   (list->ff (zip cons registers (iota 1 1 16))))
+   (list->ff (zip cons registers (iota 0 1 16))))
 
 (define (register? x)
    (get regs x #false))
@@ -634,6 +636,9 @@
    (cond
       ((not (pair? exp))
          #false)
+      ((and (eq? (car exp) '%ref)
+            (eq? (cadr exp) 'a)) ;; refer of literal, first stage
+         (list 'ref (caddr exp) (reg-num target)))
       ((not (all register? (cdr exp)))
          ;; values must be in registers
          #false)
@@ -706,6 +711,10 @@
       (and (pair? exp)
            (eq? (car exp) head)
            (= (length exp) len))))
+
+(define (proc? exp)
+   (and (pair? exp) 
+      (eq? (car exp) '%proc)))
 
 (define lambda?
    (list-heading-and-len? 'lambda 3))
@@ -780,10 +789,11 @@
       (else
          #false)))
 
+;; todo: rator can now be handled as a regular register
 (define (register-dance exp lits)
    (lets
       ((rator (car exp))
-       (regs (cons '_ register-list)) ;; add the silent r0, which will hold the operator after call / at enter
+       (regs register-list) ;; add the silent r0, which will hold the operator after call / at enter
        (needed-regs                     ;; registers whose initial values must be available at call time
          (set (if (register? rator)
                (cons rator (keep register? exp))
@@ -830,7 +840,7 @@
                                  (append (reverse insts) rinsts))))
                         (else
                            (error "register-dance: wat " desired-val))))))
-            ((eq? (car regs) '_)
+            ((eq? (car regs) 'a)
                (cond
                   ((register? rator)
                      (loop (lset regs 0 rator) (cons (list 'mov (reg-num rator) 0) rinsts)))
@@ -870,7 +880,9 @@
 ;; literals are accessable via r0
 (define (ll-lambda->basil formals exp lits)
    (ilist 'bytecode
-      (list 'arity (length formals))
+      (list 'arity 
+         ;; drop the operator register from counts
+         (- (length formals) 1))
       (ll-exp->bytecode exp lits)))
 
 (define (maybe-drop-primop exp)
@@ -918,10 +930,12 @@
 (define (literals exp)
    (find-literals null exp))
 
-;; todo: literals will be made explicit earlier in the future
 (define (ll-value->basil exp)
    (debug "LL->BASIL: " exp)
    (cond
+      ((proc? exp)
+         (cons 'proc
+            (map ll-value->basil (cdr exp))))
       ((lambda? exp)
          (lets
             ((formals (cadr exp))
@@ -934,8 +948,7 @@
                    lits)))
             (if (null? lits)
                bc
-               (ilist 'proc bc
-                  (map ll-value->basil lits)))))
+               (error "ll-value->basil: lambda would have literals " exp))))
       ((and (fixnum? exp) (>= exp 0) (< exp 4096))
          exp)
       (else
@@ -1031,6 +1044,53 @@
          (lambda (E y) (%ref E 0)))))
 
 ;;;
+;;; Gensym
+;;;
+
+(define (occurs? sym exp)
+   (cond
+      ((eq? exp sym) #true)
+      ((pair? exp)
+         (or (occurs? sym (car exp))
+             (occurs? sym (cdr exp))))
+      (else #false)))
+
+(define (gensym-id sym)
+   (let ((cs (string->list (symbol->string sym))))
+      (if (and (pair? cs)
+               (eq? (car cs) #\G)
+               (pair? (cdr cs))
+               (> (cadr cs) #\0)) ;; avoid G01 and G1 looking like the same gensym
+         (fold
+            (λ (n char)
+               (and n
+                  (let ((m (- char #\0)))
+                     (if (<= 0 m 9)
+                        (+ (* n 10) m)
+                        #false))))
+            0 (cdr cs)))))
+
+(define (max-gensym-id n x)
+   (cond
+      ((pair? x)
+         (max-gensym-id
+            (max-gensym-id n (car x))
+            (cdr x)))
+      ((symbol? x)
+         (max n (gensym-id x)))
+      (else n)))
+
+(define (gensym x)
+   (string->symbol
+      (str "G" (+ 1 (max-gensym-id 0 x)))))
+
+(check 'G1 (gensym 'x))
+(check 'G2 (gensym '(lambda (G1) G1)))
+(check 'G1 (gensym '(G0 G01 G00 G02)))
+(check 'G10001 (gensym '(G1 G10 G100 G100 G1000 G10000)))
+
+
+;;;
 ;;; CLP, closure and literal passing style
 ;;;
 
@@ -1114,54 +1174,57 @@
    (check (list 42 lexp)
       (literals `((lambda (z) (cons 42 ,lexp)) #true))))
 
+;; bytecode: #[header bytecode-bytes]
+;; procedure: #[header <bytecode-pointer> l0 l1 ...]
+;; closure: #[header <procedure> e0 e1 ...]
 
-
-;;;
-;;; Gensym
-;;;
-
-(define (occurs? sym exp)
+(define (refer-literals exp lvar lits op)
    (cond
-      ((eq? exp sym) #true)
-      ((pair? exp)
-         (or (occurs? sym (car exp))
-             (occurs? sym (cdr exp))))
-      (else #false)))
+      ((symbol? exp)
+         exp)
+      ((null? exp) exp)
+      ((quote? exp) 
+         (let ((pos (offset lits (cadr exp))))
+            (if pos
+               (list op lvar (+ pos 2)) ;; [header <code> l0 l1 ...]
+               (error "refer-literals: cannot find " exp))))
+      ((offset lits exp) =>
+         (λ (pos)
+            (list op lvar (+ pos 2)))) ;; see above for +2
+      ((list? exp)
+         (map 
+            (λ (x) (refer-literals x lvar lits op))
+             exp))
+      (else exp)))
+         
+(define (closurize exp)
+   (if (lambda? exp)
+      (lets
+         ((body (caddr exp))
+          (formals (cadr exp))
+          (free (free-vars exp))
+          (lits (literals body))
+          (lvar (if (occurs? 'L exp) (gensym exp) 'L)))
+         (if (null? free)
+            (if (null? lits)
+               ;; just add the argument
+               (list 'lambda (cons lvar formals) body)
+               ;; add argument, convert references and convert the literals
+               (ilist 
+                  '%proc
+                  (list 'lambda (cons lvar formals)
+                     (refer-literals body lvar lits '%ref))
+                  (map closurize lits)))
+            (error "closurize: no closures yet, just literals: " exp)))
+      exp))
 
-(define (gensym-id sym)
-   (let ((cs (string->list (symbol->string sym))))
-      (if (and (pair? cs)
-               (eq? (car cs) #\G)
-               (pair? (cdr cs))
-               (> (cadr cs) #\0)) ;; avoid G01 and G1 looking like the same gensym
-         (fold
-            (λ (n char)
-               (and n
-                  (let ((m (- char #\0)))
-                     (if (<= 0 m 9)
-                        (+ (* n 10) m)
-                        #false))))
-            0 (cdr cs)))))
+(define (closurize-lambdas lexp)
+   (debug "CLOS: " lexp)
+   (closurize lexp))
 
-(define (max-gensym-id n x)
-   (cond
-      ((pair? x)
-         (max-gensym-id
-            (max-gensym-id n (car x))
-            (cdr x)))
-      ((symbol? x)
-         (max n (gensym-id x)))
-      (else n)))
-
-(define (gensym x)
-   (string->symbol
-      (str "G" (+ 1 (max-gensym-id 0 x)))))
-
-(check 'G1 (gensym 'x))
-(check 'G2 (gensym '(lambda (G1) G1)))
-(check 'G1 (gensym '(G0 G01 G00 G02)))
-(check 'G10001 (gensym '(G1 G10 G100 G100 G1000 G10000)))
-
+(check 
+   '(%proc (lambda (L x) (%ref L 2)) 4095)
+   (closurize '(lambda (x) 4095)))
 
 
 ;;;
@@ -1226,7 +1289,6 @@
             (list k m exp))
          ((lambda ? ?) (formals body)
             (lets ((body (cps-to k m free body)))
-               (print "body is " body)
                (list k m (list 'lambda (ilist m k formals) body))))
          ((if (eq? ? ?) ? ?) (a b then else)
             (cond
@@ -1273,7 +1335,6 @@
       (list k m exp)))
 
 (define (cps exp)
-   (debug "CPS: " exp)
    (lets ((m k (cps-vars exp))
           (free (gensym (list m k exp)))
           (body (cps-to k m free exp)))
@@ -1526,9 +1587,14 @@
             (str "#define FP " (get mem 'fp 'bug))))))
 
 (define (test-compiler exp port)
-   (print-to stderr "Compiling " exp)
+   (debug "COMPILE: " exp)
    (output-heap
-      (ll-value->basil (alpha-convert (cps-lambda (a-normal-form (expand exp #empty)))))
+      (ll-value->basil 
+         (alpha-convert 
+            (closurize-lambdas
+               (cps-lambda 
+                  (a-normal-form 
+                     (expand exp #empty))))))
       port))
 
 (define (maybe op arg)
