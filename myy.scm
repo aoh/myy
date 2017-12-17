@@ -865,46 +865,6 @@
       (cdr exp)
       exp))
 
-(define (self-quoting? val)
-   (or 
-      (null? val)
-      (boolean? val)))
-
-(define (find-literals seen exp)
-   (cond
-      ((lambda? exp)
-         (find-literals (cons exp seen) (cadr exp)))
-      ((number? exp)
-         (if (> exp 15)
-            (cons exp seen)
-            seen))
-      ((null? exp)
-         seen)
-      ((boolean? exp)
-         seen)
-      ((null? exp)
-         seen)
-      ((list? exp)
-         (cond
-            ((lambda? (car exp))
-               (fold find-literals
-                  (find-literals seen (caddr (car exp)))
-                  (cdr exp)))
-            ((quote? exp)
-               (if (self-quoting? (cadr exp))
-                  seen
-                  (cons exp seen)))
-            (else
-               (fold find-literals seen
-                  (maybe-drop-primop exp)))))
-      ((register? exp)
-         seen)
-      (else
-         (error "find-literals: what is " exp))))
-
-(define (literals exp)
-   (find-literals null exp))
-
 (define (ll-value->basil exp)
    (debug "LL->BASIL: " exp)
    (cond
@@ -944,6 +904,7 @@
       env formals))
 
 (define (alpha-rename exp env)
+   (print (list 'alpha-rename exp env))
    (cond
       ((symbol? exp)
          (let ((reg (get env exp #false)))
@@ -967,7 +928,7 @@
                         (alpha-rename body new-env))
                      (map
                         (λ (arg) (alpha-rename arg env))
-                         (cdr exp)))))
+                        (cdr exp)))))
             ((eq? (car exp) 'lambda)
                ;; fixme: check argument count
                (lets
@@ -1092,11 +1053,13 @@
          (fold union null
             (map free-vars (cdr exp))))
       ((lambda? exp)
-         (diff (free-vars (caddr exp)) (cadr exp)))
+         (diff 
+            (free-vars (caddr exp)) 
+            (cadr exp)))
       ((list? exp)
          (fold union null
             (map free-vars
-               (maybe-drop-primop (cdr exp)))))
+               (maybe-drop-primop exp))))
       ((number? exp) null)
       ((boolean? exp) null)
       (else 
@@ -1160,7 +1123,24 @@
             (λ (x) (refer-literals x lvar lits op))
              exp))
       (else exp)))
-         
+
+(define (refer-vars exp lvar env op)
+   (cond
+      ((symbol? exp)
+         (let ((pos (offset env exp)))
+            (if pos
+               ;; closure value
+               (list op lvar (+ pos 2))
+               ;; register value
+               exp)))
+      ((null? exp) exp)
+      ((quote? exp) exp)
+      ((list? exp)
+         (map 
+            (λ (x) (refer-vars x lvar env op))
+             exp))
+      (else exp)))        
+
 (define (closurize exp)
    (if (lambda? exp)
       (lets
@@ -1169,16 +1149,25 @@
           (free (free-vars exp))
           (lits (literals body))
           (lvar (if (occurs? 'L exp) (gensym exp) 'L)))
-         (if (null? free)
-            (if (null? lits)
-               ;; just add the argument
-               (list 'lambda (cons lvar formals) body)
-               ;; add argument, convert references and convert the literals
+         (cond
+            ((and (null? free) (null? lits))
+               ;; output is just bytecode (0-level closure)
+               (list 'lambda (cons lvar formals) body))
+            ((null? free)
+               ;; output is a 1-level closure (procedure) with static content
                (ilist '%proc
                   (list 'lambda (cons lvar formals)
                      (refer-literals body lvar lits '%ref))
                   (map closurize lits)))
-            (error "closurize: no closures yet, just literals: " exp)))
+            ((null? lits)
+               ;; output is a 1-level closure (procedure) with closed content
+               (ilist '%clos
+                  (list 'lambda (cons lvar formals) 
+                     (refer-vars body lvar free '%ref))
+                  free))
+            (else
+               ;; output is a 2-level closure with both static and closed content
+               (error "closurize: no closures yet" exp))))
       exp))
 
 (define (closurize-lambdas lexp)
@@ -1188,6 +1177,10 @@
 (check 
    '(%proc (lambda (L x) (%ref L 2)) 4095)
    (closurize '(lambda (x) 4095)))
+
+(check
+   '(%clos (lambda (L x) (+ x (%ref L 2))) a)
+   (closurize '(lambda (x) (+ x a))))
 
 
 ;;;
@@ -1576,7 +1569,7 @@
    (lets
       ((path (str "c/" (getf dict 'platform) "." section))
        (data (file->list path)))
-      (if data
+     (if data
          (write-bytes port data)
          (error "failed to read platform code from " path))))
 
