@@ -904,7 +904,6 @@
       env formals))
 
 (define (alpha-rename exp env)
-   (print (list 'alpha-rename exp env))
    (cond
       ((symbol? exp)
          (let ((reg (get env exp #false)))
@@ -1117,7 +1116,13 @@
                (error "refer-literals: cannot find " exp))))
       ((offset lits exp) =>
          (λ (pos)
-            (list op lvar (+ pos 2)))) ;; see above for +2
+            (let ((val (lref lits pos)))
+               (if (lambda? exp)
+                  (let ((env (free-vars exp)))
+                     (if (null? env)
+                        (list op lvar (+ pos 2))
+                        (list '%close lvar (+ pos 2) env)))
+                  (list op lvar (+ pos 2)))))) ;; see above for +2
       ((list? exp)
          (map 
             (λ (x) (refer-literals x lvar lits op))
