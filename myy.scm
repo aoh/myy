@@ -3,6 +3,12 @@
 (import 
    (owl sexp))
 
+; next steps:
+;  - preserve ANF after literal- and closure references have been added
+;  - be aware of closure types in conversion (are we generating a proc or a clos?)
+;    - convert contents first, then a-list in body?
+
+;    
 ;;;
 ;;; System settings
 ;;;
@@ -507,6 +513,10 @@
             ((eq? (car op) 'ref)
                (ilist 24 (argto (cadr op) (caddr op))
                   (assemble-bytecode (cdr lst))))
+            ((eq? (car op) 'close)
+               (cons 25 
+                  (append (cdr op)
+                     (assemble-bytecode (cdr lst)))))
             (else
                (error "assemble-bytecode: wat " op))))))
 
@@ -576,6 +586,8 @@
    (debug "ASSEMBLE: " obj)
    (assemble mem obj))
 
+
+
 ;;;
 ;;; LL-lambda → BASIL
 ;;;
@@ -639,6 +651,19 @@
       ((and (eq? (car exp) '%ref)
             (eq? (cadr exp) 'a)) ;; refer of literal, first stage
          (list 'ref (caddr exp) (reg-num target)))
+      ((eq? (car exp) '%close)
+         (print "DEBUG: closure is " exp)
+         (lets
+            ((lit (cadr exp)) ;; assumed a
+             (pos (caddr exp)) ;; position of bytecode in literals
+             (env (car (cdddr exp))))
+            (if (all register? env)
+               ;; use a generic instruction format for now
+               ;; ... close <offset> <nenv> <e0> ... <en> <target> ...
+               (ilist 'close pos (length env) 
+                  (append (map reg-num env)
+                     (list target)))
+               (error "%close: cannot yet handle non-register values: " exp))))
       ((not (all register? (cdr exp)))
          ;; values must be in registers
          #false)
@@ -654,6 +679,7 @@
                      (= (length (cdr exp)) 2))
                (cons op (append (map reg-num (cdr exp)) (list (reg-num target))))
                (error "prim-call-to: invalid args for " exp))))
+      
       (else
          #false)))
 
@@ -694,9 +720,11 @@
            (eq? (car exp) head)
            (= (length exp) len))))
 
-(define (proc? exp)
-   (and (pair? exp) 
-      (eq? (car exp) '%proc)))
+(define (car? val)
+   (λ (exp) (and (pair? exp) (eq? val (car exp)))))
+
+(define proc? (car? '%proc))
+(define clos? (car? '%clos))
 
 (define lambda?
    (list-heading-and-len? 'lambda 3))
@@ -792,7 +820,7 @@
                #false)
             ((equal-prefix? (cdr regs) (cdr exp))
                (if (eq? (car regs) (car exp))
-                  (reverse (cons (list 'enter 0 (length (cdr exp))) rinsts))
+                  (reverse (cons (list 'enter (length (cdr exp))) rinsts))
                   (reverse
                      (cons (list 'call (offset regs rator) (length (cdr exp)))
                         rinsts))))
@@ -871,6 +899,10 @@
       ((proc? exp)
          (cons 'proc
             (map ll-value->basil (cdr exp))))
+      ((clos? exp)
+         ;; the closure is constructed where this is loaded to register, so 
+         ;; no need to do anything closure-related here
+         (ll-value->basil (cadr exp)))
       ((lambda? exp)
          (ll-lambda->basil (cadr exp) (caddr exp)))
       ((and (fixnum? exp) (>= exp 0) (< exp 4096))
@@ -1129,7 +1161,8 @@
              exp))
       (else exp)))
 
-(define (refer-vars exp lvar env op)
+;; convert references to variables in <env> to primops refs via <lvar>
+(define (refer-env exp lvar env op)
    (cond
       ((symbol? exp)
          (let ((pos (offset env exp)))
@@ -1142,7 +1175,7 @@
       ((quote? exp) exp)
       ((list? exp)
          (map 
-            (λ (x) (refer-vars x lvar env op))
+            (λ (x) (refer-env x lvar env op))
              exp))
       (else exp)))        
 
@@ -1168,16 +1201,26 @@
                ;; output is a 1-level closure (procedure) with closed content
                (ilist '%clos
                   (list 'lambda (cons lvar formals) 
-                     (refer-vars body lvar free '%ref))
+                     (refer-env body lvar free '%ref))
                   free))
             (else
                ;; output is a 2-level closure with both static and closed content
-               (error "closurize: no closures yet" exp))))
+               (ilist '%clos
+                  (ilist '%proc 
+                     (list 'lambda (cons lvar formals) 
+                        (refer-env 
+                           (refer-literals body lvar lits '%ref2)
+                           lvar free '%ref))
+                     (map closurize lits))
+                  free))))
       exp))
 
 (define (closurize-lambdas lexp)
    (debug "CLOS: " lexp)
    (closurize lexp))
+
+(check '(lambda (L x) (x x))
+   (closurize '(lambda (x) (x x))))
 
 (check 
    '(%proc (lambda (L x) (%ref L 2)) 4095)
@@ -1186,6 +1229,10 @@
 (check
    '(%clos (lambda (L x) (+ x (%ref L 2))) a)
    (closurize '(lambda (x) (+ x a))))
+
+(check
+   '(%clos (%proc (lambda (L x) (+ (%ref2 L 2) (%ref L 2))) 4095) a)
+   (closurize '(lambda (x) (+ 4095 a))))
 
 
 ;;;
@@ -1456,13 +1503,15 @@
 ;;; Macro expansion
 ;;;
 
-; input: regular lisp, env
-; output: lisp without macros
+; input: sexp, env
+; output: sexp sans macros
 
 
 (define (macro-expand exp env)
    ;; temporary version with fixed expansions
    (sexp-case exp
+      ((quote ?) (val)
+         exp)
       ((let* ((? ?) . ?) ?) (var val rest body)
          (macro-expand
             `((lambda (,var) (let* ,rest ,body)) ,val)

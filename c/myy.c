@@ -124,6 +124,39 @@ void gc(uint8_t n) {
 }
 
 
+void print_ob(word val) {
+   if (allocp(val)) {
+      word hdr = heap[val];
+      if (headerp(hdr)) {
+         int t = hdrtype(hdr);
+         int s = hdrsize(hdr);
+         if (t == TPROC) {
+            printf("#<proc@%d>", val);
+         //} else if (t == TCLOS) {
+         //   printf("#<clos@%d>", val);
+         } else if (t == TPAIR) {
+            printf("#<pair@%d>", val);
+         } else {
+            printf("#<%d/%d@%d>", t, s, val);
+         }
+      } else {
+         printf("BADPTR-to-nonhdr-%d", val);
+      }
+   } else if (fixnump(val)) {
+      printf("%d", fixval(val));
+   } else if (val == IHALT) {
+      printf("#halt");
+   } else if (val == INULL) {
+      printf("#null");
+   } else if (val == ITRUE) {
+      printf("#true");
+   } else if (val == IFALSE) {
+      printf("#false");
+   } else {
+      printf("I%d", val);
+   }
+}
+
 int vm(uint16_t entry) {
   uint8_t nargs = 3;
   uint16_t tmp;
@@ -135,6 +168,12 @@ int vm(uint16_t entry) {
   regs[2] = IHALT; // halt cont
   regs[3] = INULL; // very little machine info
   apply:
+  printf("APPLY %d", nargs);
+  for (tmp=0; tmp <= nargs; tmp++) {
+     printf(", r%d=", tmp);
+     print_ob(regs[tmp]);
+  }
+  printf("\n");
   // check that we have enough space for maximum allocation amount per frame
   // this avoids need to check for gc at each alloc within the frame and 
   // having to track location of instruction pointer, which cannot move due 
@@ -154,6 +193,7 @@ int vm(uint16_t entry) {
     dispatch_bytecode:
     ip = (uint8_t *) (heap + tmp + 1);
     dispatch:
+    printf("OP %d\n", *ip);
     switch(*ip) {
       /*      opname    (highbits lowbits) */
       case 1: // call (reg | nargs)
@@ -173,6 +213,7 @@ int vm(uint16_t entry) {
         goto dispatch;
       case 4: // enter n
         nargs = ip[1];
+        //printf("Entering with %d args\n", ip[1]);
         goto apply;
       case 5: // RET n = mov n -> r3, call n 1
         op = ip[1];
@@ -194,6 +235,7 @@ int vm(uint16_t entry) {
       case 8: // arity-or-fail
         if (nargs != ip[1]) {
           fail("arity error", nargs);
+          //printf("ARITY ERROR %d\n", nargs);
         }
         ip += 2;
         goto dispatch;
@@ -288,6 +330,29 @@ int vm(uint16_t entry) {
         regs[lowb(op)] = heap[regs[0] + highb(op)];
         ip += 2;
         goto dispatch;
+      case 25: { // close offset n e1 ... en to, closes bytecode → proc
+        uint8_t n = ip[2]; // env size
+        tmp = fp;
+        heap[fp++] = header(n + 1 , TPROC); // bytecode + n env values
+        heap[fp++] = heap[regs[0] + ip[1]];
+        ip += 3;
+        while(n--) {
+           printf(" - closing value "); print_ob(regs[*ip]); printf("\n");
+           // 4 bits wasted per val
+           //printf(" - ops %d %d %d %d %d\n", ip[0], ip[1], ip[2], ip[3], ip[4], ip[5]);
+           /*f (fixnump(regs[*ip])) {
+             printf(" - storing fixnum %d to closure\n", fixval(regs[*ip]));
+           } else {
+             printf(" - storing non-fixnum %d to closure\n", regs[*ip]);
+           } */
+           //printf("storing value from register r%d\n", *ip);
+           heap[fp++] = regs[*ip++];
+        }
+        //printf(" - end %d %d %d %d %d\n", ip[0], ip[1], ip[2], ip[3], ip[4], ip[5]);
+        //printf(" - putting closure to register %d\n", *ip);
+        regs[*ip++] = tmp;
+        printf(" - closed "); print_ob(tmp); printf("\n");
+        goto dispatch; }
       default:
         fail("bad opcode", *ip);
     }
